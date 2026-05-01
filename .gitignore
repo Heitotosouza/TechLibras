@@ -1,0 +1,24 @@
+# --- SEGURANÇA (CRÍTICO) ---
+.env
+.env*.local
+
+# --- FRONTEND ---
+node_modules/
+.next/
+out/
+build/
+npm-debug.log*
+
+# --- BACKEND ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+ENV/
+*.pkl
+
+# --- GERAL ---
+.DS_Store
+.vscode/
+.idea/
