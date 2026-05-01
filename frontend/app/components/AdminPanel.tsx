@@ -5,25 +5,45 @@ import UsersTab from "./admin/UsersTab";
 import StatsTab from "./admin/StatsTab";
 import ReportsTab from "./admin/ReportsTab";
 
+// Definição de tipos para evitar o erro de 'never[]'
+interface User {
+  _id: string;
+  username: string;
+  total_sinais?: number;
+  [key: string]: any;
+}
+
+interface AdminData {
+  users: User[];
+  sinais: string[];
+  stats: { total: number; meta: number };
+}
+
 export default function PanelAdmin() {
   const [abaAtiva, setAbaAtiva] = useState<
     "camera" | "usuarios" | "graficos" | "relatorios"
   >("camera");
 
-  const [data, setData] = useState({
+  // Estado agora usa a interface AdminData
+  const [data, setData] = useState<AdminData>({
     users: [],
-    sinais: [], // Estado para sinais vindos do banco
+    sinais: [],
     stats: { total: 0, meta: 500 },
   });
+
   const [loading, setLoading] = useState(false);
 
   const syncData = useCallback(async () => {
     setLoading(true);
     try {
+      // Em produção, você usará a URL do Koyeb.
+      // Dica: use uma variável de ambiente process.env.NEXT_PUBLIC_API_URL futuramente
+      const baseUrl = "http://localhost:8000";
+
       const [uRes, sRes, sinaisRes] = await Promise.all([
-        fetch("http://localhost:8000/admin/ranking"),
-        fetch("http://localhost:8000/admin/stats_sinais"),
-        fetch("http://localhost:8000/admin/lista-sinais"), // Rota dinâmica do backend
+        fetch(`${baseUrl}/admin/ranking`),
+        fetch(`${baseUrl}/admin/stats_sinais`),
+        fetch(`${baseUrl}/admin/lista-sinais`),
       ]);
 
       const usersJson = await uRes.json();
@@ -33,7 +53,7 @@ export default function PanelAdmin() {
       setData({
         users: Array.isArray(usersJson) ? usersJson : [],
         stats: statsJson || { total: 0, meta: 500 },
-        sinais: Array.isArray(sinaisJson) ? sinaisJson : [], // Sinais reais do banco
+        sinais: Array.isArray(sinaisJson) ? sinaisJson : [],
       });
     } catch (e) {
       console.error("Erro na sincronização:", e);
