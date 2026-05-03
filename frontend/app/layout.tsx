@@ -1,6 +1,6 @@
+
 import type { Metadata } from "next";
 import "./globals.css";
-import Script from "next/script";
 
 export const metadata: Metadata = {
   title: "TechLibras",
@@ -14,16 +14,8 @@ export default function RootLayout({
 }) {
   return (
     <html lang="pt-br">
-      <body>
+      <body className="antialiased">
         {children}
-        <Script
-          src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"
-          strategy="beforeInteractive"
-        />
-        <Script
-          src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"
-          strategy="beforeInteractive"
-        />
       </body>
     </html>
   );

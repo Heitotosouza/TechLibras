@@ -9,16 +9,19 @@ from passlib.context import CryptContext
 from bson import ObjectId
 from fastapi import APIRouter, Response
 from fpdf import FPDF
+import cv2
+from faster_whisper import WhisperModel
 
 # Importando suas instâncias do database.py
 from database import db_users, db_sinais
 
 router = APIRouter()
 app = FastAPI()
+whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -70,11 +73,24 @@ async def prever_sinal(dados: DadosMao):
 async def login(dados: dict):
     username = dados.get("username")
     password = dados.get("password")
+
     user = await db_users.usuarios.find_one({"username": username})
+
     if not user:
         return {"status": "error", "message": "Usuário não encontrado"}
-    if verificar_senha(password, user["password"]) or user["password"] == password:
-        return {"status": "success", "role": user["role"], "username": user["username"]}
+
+    try:
+        senha_valida = verificar_senha(password, user["password"])
+    except:
+        senha_valida = False
+
+    if senha_valida or user["password"] == password:
+        return {
+            "status": "success",
+            "role": user.get("role", "TREINADOR"),
+            "username": user["username"],
+        }
+
     return {"status": "error", "message": "Senha incorreta"}
 
 
@@ -341,3 +357,82 @@ async def export_report(user: str = "all", sinal: str = "all", date: str = ""):
             "Content-Disposition": f"attachment; filename=auditoria_{user}_{sinal}.pdf"
         },
     )
+
+
+@app.post("/chatbot-ajuda")
+async def chatbot_ajuda(dados: dict):
+    mapa_navegacao = {
+        "TREINO": "/treino",
+        "ESTUDAR": "/treino",
+        "TRADUZIR": "/traducao",
+        "TRADUTOR": "/traducao",
+        "CONVERSAR": "/traducao",
+        "AJUDA": "abrir_ajuda",
+        "SAIR": "logout",
+        "ENTRAR": "/login",
+        "CADASTRO": "/cadastro",
+        "CONFIGURAÇÃO": "/perfil",
+    }
+
+    if "landmarks" in dados:
+        pontos = []
+        for lm in dados["landmarks"]:
+            pontos.extend([lm["x"], lm["y"], lm["z"]])
+
+        previsao = modelo.predict([pontos])[0]
+        if previsao in mapa_navegacao:
+            res = mapa_navegacao[previsao]
+
+            if res in ["logout", "abrir_ajuda"]:
+                return {"status": "success", "acao": res}
+
+            return {
+                "status": "success",
+                "acao": "navegar",
+                "rota": res,
+            }
+
+    if "texto" in dados:
+        texto = dados["texto"].upper()
+        for palavra, rota in mapa_navegacao.items():
+            if palavra in texto:
+                if rota in ["logout", "abrir_ajuda"]:
+                    return {"status": "success", "acao": rota}
+                return {"status": "success", "acao": "navegar", "rota": rota}
+
+    return {"status": "error", "message": "Comando não reconhecido"}
+
+
+@app.post("/salvar-resultado-treino")
+async def salvar_resultado_treino(dados: dict):
+    historico = {
+        "username": dados["username"],
+        "sinal_esperado": dados["sinal_esperado"],
+        "sinal_feito": dados["sinal_feito"],
+        "correto": dados["correto"],
+        "data": datetime.now(),
+    }
+    await db_users.historico_treino.insert_one(historico)
+    return {"status": "success"}
+
+
+@app.get("/stats-estudante/{username}")
+async def stats_estudante(username: str):
+    agora = datetime.now()
+    sete_dias_atras = agora - timedelta(days=7)
+
+    pipeline = [
+        {"$match": {"username": username, "data": {"$gte": sete_dias_atras}}},
+        {
+            "$group": {
+                "_id": {"$dateToString": {"format": "%d/%m", "date": "$data"}},
+                "acertos": {"$sum": {"$cond": ["$correto", 1, 0]}},
+                "erros": {"$sum": {"$cond": ["$correto", 0, 1]}},
+            }
+        },
+        {"$sort": {"_id": 1}},
+    ]
+
+    cursor = db_users.historico_treino.aggregate(pipeline)
+    res = await cursor.to_list(length=7)
+    return res
