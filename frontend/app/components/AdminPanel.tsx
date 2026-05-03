@@ -1,11 +1,12 @@
 "use client";
 import React, { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation"; // Importar o roteador
 import CollectTab from "./admin/CollectTab";
 import UsersTab from "./admin/UsersTab";
 import StatsTab from "./admin/StatsTab";
 import ReportsTab from "./admin/ReportsTab";
 
-// Definição de tipos para evitar o erro de 'never[]'
+// Definição de tipos
 interface User {
   _id: string;
   username: string;
@@ -20,11 +21,11 @@ interface AdminData {
 }
 
 export default function PanelAdmin() {
+  const router = useRouter(); // Inicializar o roteador
   const [abaAtiva, setAbaAtiva] = useState<
     "camera" | "usuarios" | "graficos" | "relatorios"
   >("camera");
 
-  // Estado agora usa a interface AdminData
   const [data, setData] = useState<AdminData>({
     users: [],
     sinais: [],
@@ -33,13 +34,17 @@ export default function PanelAdmin() {
 
   const [loading, setLoading] = useState(false);
 
+  // --- FUNÇÃO DE LOGOUT ---
+  const handleLogout = () => {
+    localStorage.removeItem("techlibras_user");
+    // Se o seu login estiver na Home (/), usamos o window.location para garantir o refresh total do estado
+    window.location.href = "/";
+  };
+
   const syncData = useCallback(async () => {
     setLoading(true);
     try {
-      // Em produção, você usará a URL do Koyeb.
-      // Dica: use uma variável de ambiente process.env.NEXT_PUBLIC_API_URL futuramente
       const baseUrl = "http://localhost:8000";
-
       const [uRes, sRes, sinaisRes] = await Promise.all([
         fetch(`${baseUrl}/admin/ranking`),
         fetch(`${baseUrl}/admin/stats_sinais`),
@@ -105,18 +110,28 @@ export default function PanelAdmin() {
           ))}
         </nav>
 
-        <div className="p-8 border-t border-slate-800 bg-slate-950/50">
+        {/* PERFIL E BOTÃO DE SAIR */}
+        <div className="p-6 border-t border-slate-800 bg-slate-950/50 flex flex-col gap-4">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center font-black text-white">
               HS
             </div>
-            <div>
-              <p className="text-xs font-black text-white">HeitorSS</p>
-              <p className="text-[10px] text-emerald-500 font-bold uppercase">
+            <div className="flex-1">
+              <p className="text-xs font-black text-white leading-none">
+                HeitorSS
+              </p>
+              <p className="text-[10px] text-emerald-500 font-bold uppercase mt-1">
                 Master
               </p>
             </div>
           </div>
+
+          <button
+            onClick={handleLogout}
+            className="w-full py-3 rounded-xl border border-red-500/20 bg-red-500/5 text-red-500 text-[10px] font-black uppercase tracking-[0.2em] hover:bg-red-500 hover:text-white transition-all active:scale-95"
+          >
+            Encerrar Sessão
+          </button>
         </div>
       </aside>
 

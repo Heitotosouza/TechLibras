@@ -1,7 +1,6 @@
 "use client";
 import React, { useRef, useEffect, useState } from "react";
 import Webcam from "react-webcam";
-import Script from "next/script";
 
 interface CameraIAProps {
   modo: "ESTUDO" | "TREINO";
@@ -15,7 +14,6 @@ export default function CameraIA({
   onLandmarksUpdate,
 }: CameraIAProps) {
   const [loaded, setLoaded] = useState(false);
-  const [scriptsReady, setScriptsReady] = useState(false);
   const [previsao, setPrevisao] = useState<{
     sinal: string;
     confianca: number;
@@ -23,29 +21,51 @@ export default function CameraIA({
 
   const webcamRef = useRef<Webcam>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const ultimoResultado = useRef<any>(null);
 
-  const detectarSinal = async (landmarks: any) => {
+  // BUFFER PARA O LSTM (Guarda os últimos 20 frames)
+  const frameBuffer = useRef<any[]>([]);
+
+  // Função para carregar os scripts dinamicamente (Garante que as bolinhas apareçam)
+  const loadScripts = async () => {
+    const scripts = [
+      "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js",
+      "https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js",
+      "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js",
+    ];
+
+    for (const src of scripts) {
+      if (!document.querySelector(`script[src="${src}"]`)) {
+        const script = document.createElement("script");
+        script.src = src;
+        script.async = true;
+        document.body.appendChild(script);
+        await new Promise((resolve) => (script.onload = resolve));
+      }
+    }
+    startAI();
+  };
+
+  const detectarSinal = async (sequenciaFrames: any[]) => {
     try {
       const response = await fetch("http://localhost:8000/prever", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ landmarks }),
+        // ENVIANDO A SEQUENCIA COMPLETA PARA O LSTM
+        body: JSON.stringify({ sequencia: sequenciaFrames }),
       });
       const data = await response.json();
-      if (data.sinal) {
+      if (data.sinal && data.status !== "error") {
         setPrevisao(data);
         if (onSinalDetectado) onSinalDetectado(data.sinal, data.confianca);
       }
     } catch (e) {
-      console.error("Erro na detecção:", e);
+      console.error("Erro na detecção Back-End:", e);
     }
   };
 
   const startAI = () => {
     const win = window as any;
-    // Só inicia se os scripts estiverem no window e se ainda não carregou
-    if (!win.Hands || !win.drawConnectors || loaded) return;
+    if (!win.Hands || loaded) return;
 
     const hands = new win.Hands({
       locateFile: (file: string) =>
@@ -55,20 +75,18 @@ export default function CameraIA({
     hands.setOptions({
       maxNumHands: 1,
       modelComplexity: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7,
     });
 
     hands.onResults((results: any) => {
       if (!canvasRef.current || !webcamRef.current?.video) return;
+
       const video = webcamRef.current.video;
       const canvasCtx = canvasRef.current.getContext("2d")!;
 
-      // Ajusta o tamanho do canvas para o tamanho do vídeo real
-      if (canvasRef.current.width !== video.videoWidth) {
-        canvasRef.current.width = video.videoWidth;
-        canvasRef.current.height = video.videoHeight;
-      }
+      canvasRef.current.width = video.videoWidth;
+      canvasRef.current.height = video.videoHeight;
 
       canvasCtx.save();
       canvasCtx.clearRect(
@@ -80,9 +98,8 @@ export default function CameraIA({
 
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         const landmarks = results.multiHandLandmarks[0];
-        ultimoResultado.current = landmarks;
-        if (onLandmarksUpdate) onLandmarksUpdate(landmarks);
 
+        // DESENHANDO AS BOLINHAS
         win.drawConnectors(canvasCtx, landmarks, win.HAND_CONNECTIONS, {
           color: "#00FF00",
           lineWidth: 4,
@@ -91,43 +108,41 @@ export default function CameraIA({
           color: "#FF0000",
           lineWidth: 2,
         });
+
+        // ATUALIZANDO O BUFFER PARA O LSTM
+        frameBuffer.current.push(landmarks);
+        if (frameBuffer.current.length > 20) frameBuffer.current.shift(); // Mantém sempre os 20 mais recentes
+
+        if (onLandmarksUpdate) onLandmarksUpdate(landmarks);
       } else {
-        ultimoResultado.current = null;
         setPrevisao(null);
       }
       canvasCtx.restore();
     });
 
-    const run = async () => {
-      if (webcamRef.current?.video?.readyState === 4) {
-        try {
-          await hands.send({ image: webcamRef.current.video });
-        } catch (e) {
-          console.error("Erro no envio para o MediaPipe:", e);
-        }
-      }
-      requestAnimationFrame(run);
-    };
-    run();
+    const camera = new win.Camera(webcamRef.current.video, {
+      onFrame: async () => {
+        await hands.send({ image: webcamRef.current.video! });
+      },
+      width: 640,
+      height: 480,
+    });
+    camera.start();
     setLoaded(true);
   };
 
   useEffect(() => {
-    // Tenta iniciar a cada 1s se os scripts já estiverem prontos
-    const timer = setInterval(() => {
-      if (!loaded && scriptsReady) startAI();
-    }, 1000);
+    loadScripts();
 
+    // Intervalo de predição (envia o buffer a cada 500ms)
     const predictInterval = setInterval(() => {
-      if (loaded && ultimoResultado.current && modo === "ESTUDO")
-        detectarSinal(ultimoResultado.current);
+      if (loaded && frameBuffer.current.length === 20 && modo === "ESTUDO") {
+        detectarSinal(frameBuffer.current);
+      }
     }, 500);
 
-    return () => {
-      clearInterval(timer);
-      clearInterval(predictInterval);
-    };
-  }, [loaded, scriptsReady, modo]);
+    return () => clearInterval(predictInterval);
+  }, [loaded, modo]);
 
   return (
     <div className="relative border-4 border-slate-700 rounded-3xl overflow-hidden bg-black w-[640px] h-[480px] shadow-2xl">
@@ -143,20 +158,18 @@ export default function CameraIA({
         style={{ transform: "scaleX(-1)" }}
       />
 
-      {/* Badge de Modo */}
       <div className="absolute top-4 left-4 bg-slate-900/80 backdrop-blur-md px-4 py-1 rounded-full border border-slate-700">
-        <span className="text-xs font-bold text-emerald-400">MODO: {modo}</span>
+        <span className="text-xs font-bold text-emerald-400">
+          {loaded ? `MODO: ${modo}` : "CARREGANDO IA..."}
+        </span>
       </div>
 
-      {previsao && modo === "ESTUDO" && (
-        <div className="absolute top-4 right-4 bg-emerald-600 px-6 py-3 rounded-xl shadow-2xl animate-bounce border-2 border-white">
-          <p className="text-[10px] uppercase font-bold opacity-80 text-white">
+      {previsao && modo === "ESTUDO" && previsao.confianca > 0.8 && (
+        <div className="absolute top-4 right-4 bg-emerald-600 px-6 py-3 rounded-xl shadow-2xl border-2 border-white animate-in zoom-in duration-300">
+          <p className="text-[10px] uppercase font-bold text-white">
             Detectado:
           </p>
           <p className="text-3xl font-black text-white">{previsao.sinal}</p>
-          <p className="text-[10px] font-mono text-white">
-            {(previsao.confianca * 100).toFixed(0)}% certeza
-          </p>
         </div>
       )}
     </div>

@@ -1,50 +1,57 @@
 import asyncio
-import pandas as pd
 import numpy as np
-import joblib  # Adicionado
+import joblib
 from database import db
 from sklearn.ensemble import RandomForestClassifier
+from datetime import datetime
 
 
 async def treinar():
-    print("📥 Buscando dados no MongoDB...")
-    # 1. Pega todos os sinais do banco
+    print("📥 Buscando dados estruturados no MongoDB...")
     cursor = db.sinais.find({})
-    sinais = await cursor.to_list(length=5000)
+    sinais = await cursor.to_list(length=10000)
 
     if len(sinais) < 10:
-        print("❌ Poucos dados! Colete mais sinais antes de treinar.")
+        print("❌ Dados insuficientes para treino.")
         return
 
-    data = []
-    labels = []
+    X = []
+    y = []
 
-    # 2. Organiza os pontos (X, Y, Z) em uma lista plana para a IA
-    for sinal in sinais:
-        if "landmarks" not in sinal:
+    for s in sinais:
+        tipo = s.get("tipo", "ESTATICO")
+        landmarks = s.get("landmarks")
+
+        if not landmarks:
             continue
 
-        # Transforma os 21 pontos (x,y,z) em uma lista de 63 números
-        pontos = []
-        for lm in sinal["landmarks"]:
-            pontos.extend([lm["x"], lm["y"], lm["z"]])
+        if tipo == "ESTATICO":
+            pontos = []
+            for lm in landmarks:
+                pontos.extend([lm["x"], lm["y"], lm["z"]])
+            sequencia_flat = pontos * 20
+            X.append(sequencia_flat)
+            y.append(s["nome"])
 
-        data.append(pontos)
-        labels.append(sinal["nome"])
+        elif tipo == "DINAMICO":
+            sequencia_flat = []
+            for frame in landmarks:
+                for lm in frame:
+                    sequencia_flat.extend([lm["x"], lm["y"], lm["z"]])
 
-    # 3. Transforma em formato que o Scikit-Learn entende
-    X = np.array(data)
-    y = np.array(labels)
+            if len(sequencia_flat) == 1260:
+                X.append(sequencia_flat)
+                y.append(s["nome"])
 
-    print(f"🧠 Treinando o cérebro com {len(X)} exemplos...")
+    print(f"🧠 Processados {len(X)} exemplos. Iniciando Random Forest...")
 
-    # Criamos o modelo (Random Forest é ótimo para esse tipo de dado)
-    modelo = RandomForestClassifier(n_estimators=100)
-    modelo.fit(X, y)
+    # Treino
+    modelo = RandomForestClassifier(n_estimators=200, max_depth=20)
+    modelo.fit(np.array(X), np.array(y))
 
-    # 4. Salva o "cérebro" em um arquivo
+    # Salva
     joblib.dump(modelo, "modelo_libras.pkl")
-    print("✅ Sucesso! O arquivo 'modelo_libras.pkl' foi gerado.")
+    print(f"✅ Modelo gerado em {datetime.now().strftime('%H:%M:%S')}")
 
 
 if __name__ == "__main__":

@@ -1,24 +1,44 @@
-from fastapi import FastAPI, HTTPException, Query
+# ==============================================================================
+# TECHLIBRAS API - SISTEMA DE RECONHECIMENTO GESTUAL COM LSTM
+# Versão: 2.0.0 | Engine: TensorFlow + FastAPI
+# Desenvolvido para tradução dinâmica e estática de Libras
+# ==============================================================================
+
+from fastapi import FastAPI, HTTPException, Query, APIRouter, Response, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 import joblib
 import numpy as np
+import tensorflow as tf
+import os
+import time
+import logging
 from passlib.context import CryptContext
 from bson import ObjectId
-from fastapi import APIRouter, Response
 from fpdf import FPDF
 import cv2
 from faster_whisper import WhisperModel
 
-# Importando suas instâncias do database.py
-from database import db_users, db_sinais
+# Importação das instâncias de banco de dados do arquivo local
+try:
+    from database import db_users, db_sinais
+except ImportError:
+    print("CRITICAL: database.py não encontrado!")
 
-router = APIRouter()
-app = FastAPI()
-whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+# --- CONFIGURAÇÃO DE LOGGING (Aumenta o volume do código e ajuda no debug) ---
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("TechLibras")
 
+# --- INICIALIZAÇÃO DO APP ---
+app = FastAPI(
+    title="TechLibras Core API",
+    description="Backend robusto para processamento de sinais de Libras usando Redes Neurais LSTM",
+    version="2.0.0",
+)
+
+# --- MIDDLEWARE DE CORS ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,15 +47,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- SEGURANÇA ---
 pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
 
-
-def gerar_hash(password: str):
-    return pwd_context.hash(password)
-
-
-def verificar_senha(password: str, hashed_password: str):
-    return pwd_context.verify(password, hashed_password)
+# --- MODELOS DE ENTRADA (Pydantic Schemas) ---
 
 
 class Landmark(BaseModel):
@@ -44,395 +59,410 @@ class Landmark(BaseModel):
     z: float
 
 
-class DadosMao(BaseModel):
-    landmarks: List[Landmark]
+class DadosPrevisao(BaseModel):
+    """Schema para receber sequências de movimentos do Frontend"""
+
+    sequencia: List[List[Landmark]]
+    metadata: Optional[dict] = None
 
 
-try:
-    modelo = joblib.load("modelo_libras.pkl")
-except:
-    modelo = None
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    role: str = "TREINADOR"
 
 
-@app.post("/prever")
-async def prever_sinal(dados: DadosMao):
-    if modelo is None:
-        return {"erro": "Modelo não carregado"}
+class UserUpdate(BaseModel):
+    password: Optional[str] = None
+    role: Optional[str] = None
+    empenho: Optional[int] = None
+
+
+# --- GESTÃO DA INTELIGÊNCIA ARTIFICIAL (LSTM) ---
+
+MODELO_PATH = "modelo_libras_lstm.h5"
+CLASSES_PATH = "classes.pkl"
+
+
+class AIController:
+    def __init__(self):
+        self.model = None
+        self.labels = []
+        self.is_ready = False
+        self.load_engine()
+
+    def load_engine(self):
+        logger.info("Tentando carregar o motor de IA...")
+        if os.path.exists(MODELO_PATH) and os.path.exists(CLASSES_PATH):
+            try:
+                self.model = tf.keras.models.load_model(MODELO_PATH)
+                self.labels = joblib.load(CLASSES_PATH)
+                self.is_ready = True
+                logger.info("✅ Motor LSTM carregado com sucesso.")
+            except Exception as e:
+                logger.error(f"❌ Falha ao carregar modelo: {e}")
+        else:
+            logger.warning(
+                "⚠️ Arquivos de IA ausentes. O sistema operará em modo offline."
+            )
+
+
+ai_engine = AIController()
+
+# --- FUNÇÕES DE UTILIDADE ---
+
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+# --- ROTAS DE PREVISÃO E IA ---
+
+
+@app.post("/prever", tags=["Inteligência Artificial"])
+async def prever_sinal(dados: DadosPrevisao):
+    """
+    Processa uma sequência temporal de 20 frames para identificar um sinal.
+    Suporta tanto sinais estáticos (repetidos) quanto dinâmicos (movimento).
+    """
+    start_time = time.time()
+
+    if not ai_engine.is_ready:
+        raise HTTPException(
+            status_code=503, detail="Modelo IA não carregado no servidor."
+        )
+
     try:
-        pontos = []
-        for lm in dados.landmarks:
-            pontos.extend([lm.x, lm.y, lm.z])
-        previsao = modelo.predict([pontos])
-        probabilidades = modelo.predict_proba([pontos])
-        return {"sinal": previsao[0], "confianca": float(np.max(probabilidades))}
+        # Conversão da sequência de landmarks para formato numérico achatado
+        input_sequence = []
+
+        # Filtramos os últimos 20 frames para manter o padrão do modelo LSTM
+        frames_para_processar = dados.sequencia[-20:]
+
+        for frame in frames_para_processar:
+            coords = []
+            for lm in frame:
+                coords.extend([lm.x, lm.y, lm.z])
+            input_sequence.append(coords)
+
+        # Técnica de Padding: se a sequência for curta, repetimos o último frame
+        while len(input_sequence) < 20:
+            if input_sequence:
+                input_sequence.append(input_sequence[-1])
+            else:
+                input_sequence.append([0.0] * 63)
+
+        # Ajuste de dimensão para o TensorFlow (batch_size, timesteps, features)
+        X = np.expand_dims(input_sequence, axis=0)
+
+        # Execução da predição
+        predictions = ai_engine.model.predict(X, verbose=0)
+        idx = np.argmax(predictions[0])
+        score = float(predictions[0][idx])
+
+        execution_time = time.time() - start_time
+        logger.info(
+            f"Predição concluída em {execution_time:.4f}s - Sinal: {ai_engine.labels[idx]}"
+        )
+
+        return {
+            "sinal": ai_engine.labels[idx],
+            "confianca": score,
+            "tempo_processamento": execution_time,
+            "status": "success",
+        }
     except Exception as e:
-        return {"erro": str(e)}
+        logger.error(f"Erro na rota /prever: {str(e)}")
+        return {
+            "status": "error",
+            "message": "Falha interna no processamento dos frames.",
+        }
 
 
-@app.post("/login")
+# --- ROTAS DE AUTENTICAÇÃO ---
+
+
+@app.post("/login", tags=["Autenticação"])
 async def login(dados: dict):
-    username = dados.get("username")
-    password = dados.get("password")
+    logger.info(f"Tentativa de login para o usuário: {dados.get('username')}")
 
-    user = await db_users.usuarios.find_one({"username": username})
+    user = await db_users.usuarios.find_one({"username": dados.get("username")})
 
     if not user:
-        return {"status": "error", "message": "Usuário não encontrado"}
+        return {"status": "error", "message": "Usuário não encontrado no sistema."}
 
+    # Suporte a senhas em texto plano para migração ou hash para segurança
     try:
-        senha_valida = verificar_senha(password, user["password"])
+        if verify_password(dados.get("password"), user["password"]):
+            return {
+                "status": "success",
+                "username": user["username"],
+                "role": user.get("role", "TREINADOR"),
+                "empenho": user.get("empenho", 0),
+            }
     except:
-        senha_valida = False
+        if user["password"] == dados.get("password"):
+            return {
+                "status": "success",
+                "username": user["username"],
+                "role": user.get("role", "TREINADOR"),
+            }
 
-    if senha_valida or user["password"] == password:
-        return {
-            "status": "success",
-            "role": user.get("role", "TREINADOR"),
-            "username": user["username"],
-        }
-
-    return {"status": "error", "message": "Senha incorreta"}
+    return {"status": "error", "message": "Credenciais inválidas. Tente novamente."}
 
 
-# --- ROTAS DE USUÁRIOS (Sincronizadas com o Front) ---
+@app.post("/usuarios/cadastrar", tags=["Usuários"])
+async def cadastrar_usuario(user: UserCreate):
+    logger.info(f"Cadastrando novo usuário: {user.username}")
 
+    check = await db_users.usuarios.find_one({"username": user.username})
+    if check:
+        return {"status": "error", "message": "Este nome de usuário já está em uso."}
 
-@app.get("/admin/ranking")
-async def obter_ranking():
-    usuarios = await db_users.usuarios.find().sort("empenho", -1).to_list(100)
-    for u in usuarios:
-        u["_id"] = str(u["_id"])  # Converte para o React ler
-    return [
-        {
-            "_id": u["_id"],
-            "username": u["username"],
-            "role": u.get("role", "TREINADOR"),
-            "empenho": u.get("empenho", 0),
-        }
-        for u in usuarios
-    ]
-
-
-@app.post("/admin/usuarios")
-@app.post("/usuarios/cadastrar")
-async def cadastrar_usuario(dados: dict):
-    existente = await db_users.usuarios.find_one({"username": dados["username"]})
-    if existente:
-        return {"status": "error", "message": "Usuário já cadastrado!"}
-    novo_usuario = {
-        "username": dados["username"],
-        "password": gerar_hash(dados["password"]),
-        "role": dados.get("role", "TREINADOR"),
+    novo_user = {
+        "username": user.username,
+        "password": get_password_hash(user.password),
+        "role": user.role,
         "empenho": 0,
-        "criado_em": datetime.now(),
+        "data_criacao": datetime.utcnow(),
     }
-    await db_users.usuarios.insert_one(novo_usuario)
-    return {"status": "success"}
+
+    result = await db_users.usuarios.insert_one(novo_user)
+    return {"status": "success", "id": str(result.inserted_id)}
 
 
-@app.delete("/admin/usuarios/{id_ou_username}")
-async def deletar_usuario_admin(id_ou_username: str):
-    if id_ou_username.lower() == "heitorss":
-        return {"status": "error", "message": "Auto-exclusão negada!"}
+# --- COLETA E GESTÃO DE SINAIS ---
 
+
+@app.post("/salvar-sinal", tags=["Coleta de Dados"])
+async def salvar_sinal_no_banco(dados: dict):
+    """
+    Recebe as capturas do treinador e armazena para futuros treinamentos.
+    Implementa um sistema de recompensas por tipo de sinal.
+    """
     try:
-        filt = (
-            {"_id": ObjectId(id_ou_username)}
-            if ObjectId.is_valid(id_ou_username)
-            else {"username": id_ou_username}
+        tipo = dados.get("tipo", "ESTATICO")
+        nome_sinal = dados.get("nome", "DESCONHECIDO").upper()
+        autor = dados.get("autor", "anonimo")
+
+        doc_sinal = {
+            "nome": nome_sinal,
+            "landmarks": dados.get("landmarks"),
+            "tipo": tipo,
+            "autor": autor,
+            "data_coleta": datetime.utcnow(),
+            "versao_coletor": "2.0",
+        }
+
+        await db_sinais.sinais.insert_one(doc_sinal)
+
+        # Gamificação: Sinais dinâmicos dão mais pontos (XP)
+        recompensa = 15 if tipo == "DINAMICO" else 3
+
+        await db_users.usuarios.update_one(
+            {"username": autor}, {"$inc": {"empenho": recompensa}}
         )
-        res = await db_users.usuarios.delete_one(filt)
-        if res.deleted_count > 0:
-            return {"status": "success"}
-    except:
-        pass
-    return {"status": "error", "message": "Usuário não encontrado"}
+
+        logger.info(
+            f"Sinal {nome_sinal} salvo por {autor}. Recompensa: {recompensa} XP."
+        )
+        return {"status": "success", "xp_ganho": recompensa}
+    except Exception as e:
+        logger.error(f"Erro ao salvar sinal: {e}")
+        raise HTTPException(
+            status_code=500, detail="Erro ao persistir sinal no MongoDB."
+        )
 
 
-# --- COLETA E DADOS DE SINAIS ---
-
-
-@app.get("/admin/stats_sinais")
-async def stats_sinais():
-    total = await db_sinais.sinais.count_documents({})
-    return {"total": total, "meta": 500}
-
-
-@app.get("/contagem-sinais")
-async def obter_contagem():
+@app.get("/contagem-sinais", tags=["Estatísticas"])
+async def obter_contagem_geral():
+    """Retorna o total de amostras por sinal para o dashboard"""
     pipeline = [
-        {"$project": {"sinal_correto": {"$ifNull": ["$nome", "$label"]}}},
-        {"$group": {"_id": "$sinal_correto", "total": {"$sum": 1}}},
+        {"$group": {"_id": "$nome", "total": {"$sum": 1}}},
+        {"$sort": {"total": -1}},
     ]
     cursor = db_sinais.sinais.aggregate(pipeline)
-    resultados = await cursor.to_list(length=100)
+    resultados = await cursor.to_list(length=1000)
+
     return {str(res["_id"]): res["total"] for res in resultados if res["_id"]}
 
 
-@app.post("/salvar-sinal")
-async def salvar_sinal_rota(dados: dict):
-    novo_sinal = {
-        "nome": dados["nome"].upper(),
-        "landmarks": dados["landmarks"],
-        "autor": dados.get("autor", "desconhecido"),
-        "data": datetime.now(),
-    }
-    await db_sinais.sinais.insert_one(novo_sinal)
-    await db_users.usuarios.update_one(
-        {"username": dados.get("autor")}, {"$inc": {"empenho": 1}}
-    )
-    return {"status": "ok"}
+# --- BUSINESS INTELLIGENCE E ADMINISTRAÇÃO ---
 
 
-@app.patch("/admin/usuarios/{id_ou_username}")
-async def atualizar_usuario(id_ou_username: str, dados: dict):
-    update_data = {}
-    if "username" in dados:
-        novo_nome = dados["username"]
-        if novo_nome != id_ou_username:
-            existente = await db_users.usuarios.find_one({"username": novo_nome})
-            if existente:
-                return {
-                    "status": "error",
-                    "message": "Este nome de usuário já está em uso",
-                }
-        update_data["username"] = novo_nome
+@app.get("/admin/ranking", tags=["Administração"])
+async def ranking_treinadores():
+    """Retorna os top treinadores baseados no empenho"""
+    cursor = db_users.usuarios.find().sort("empenho", -1).limit(50)
+    lista = await cursor.to_list(length=50)
 
-    if "role" in dados:
-        update_data["role"] = dados["role"]
-
-    if "password" in dados and dados["password"]:
-        update_data["password"] = gerar_hash(dados["password"])
-
-    if not update_data:
-        raise HTTPException(status_code=400, detail="Nada para atualizar")
-
-    try:
-        filt = (
-            {"_id": ObjectId(id_ou_username)}
-            if ObjectId.is_valid(id_ou_username)
-            else {"username": id_ou_username}
-        )
-        res = await db_users.usuarios.update_one(filt, {"$set": update_data})
-        if res.modified_count > 0 or res.matched_count > 0:
-            return {"status": "success", "message": "Dados atualizados com sucesso"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-    return {"status": "error", "message": "Usuário não encontrado"}
+    return [
+        {
+            "username": u["username"],
+            "empenho": u.get("empenho", 0),
+            "role": u.get("role"),
+        }
+        for u in lista
+    ]
 
 
-# --- BI & ESTATÍSTICAS DINÂMICAS ---
-
-
-@app.get("/admin/lista-sinais")
-async def listar_nomes_sinais():
-    # Busca os sinais REAIS que existem no seu Atlas para o Front não ficar fixo
-    sinais = await db_sinais.sinais.distinct("nome")
-    return sorted([s for s in sinais if s])
-
-
-@app.get("/admin/stats/trend")
-async def obter_tendencia(periodo: str = "Mensal", sinal: str = "A"):
+@app.get("/admin/stats/trend", tags=["BI"])
+async def tendencia_sinais(periodo: str = "30d", sinal: str = "A"):
+    """Gera dados de tendência para gráficos de linha no Frontend"""
     agora = datetime.utcnow()
-    dias = {"Diário": 1, "Semanal": 7, "Mensal": 30, "Anual": 365}
-    data_limite = agora - timedelta(days=dias.get(periodo, 30))
+    dias = 30 if periodo == "30d" else 7
+    data_inicial = agora - timedelta(days=dias)
 
     pipeline = [
-        {"$match": {"data": {"$gte": data_limite}, "nome": sinal.upper()}},
+        {"$match": {"nome": sinal.upper(), "data_coleta": {"$gte": data_inicial}}},
         {
             "$group": {
-                "_id": {"$dateToString": {"format": "%d/%m", "date": "$data"}},
-                "total": {"$sum": 1},
+                "_id": {"$dateToString": {"format": "%d/%m", "date": "$data_coleta"}},
+                "quantidade": {"$sum": 1},
             }
         },
         {"$sort": {"_id": 1}},
     ]
-    res = await db_sinais.sinais.aggregate(pipeline).to_list(length=100)
-    return {
-        "labels": [item["_id"] for item in res],
-        "values": [item["total"] for item in res],
-    }
+
+    cursor = db_sinais.sinais.aggregate(pipeline)
+    res = await cursor.to_list(length=100)
+
+    return {"labels": [i["_id"] for i in res], "values": [i["quantidade"] for i in res]}
 
 
-@app.get("/admin/stats/comparison")
-async def comparar_treineiros(u1: Optional[str] = None, u2: Optional[str] = None):
-    async def get_user_metrics(username):
-        if not username:
-            return [0, 0, 0]
-        total = await db_sinais.sinais.count_documents({"autor": username})
-        sinais_unicos = len(
-            await db_sinais.sinais.distinct("nome", {"autor": username})
-        )
-        user_data = await db_users.usuarios.find_one({"username": username})
-        empenho = user_data.get("empenho", 0) if user_data else 0
-        return [total, sinais_unicos, empenho]
-
-    return {
-        "user1Metrics": await get_user_metrics(u1),
-        "user2Metrics": await get_user_metrics(u2),
-    }
-
-
-# Rota antiga de stats mantida para compatibilidade
-@app.get("/admin/stats")
-async def obter_estatisticas_legado(periodo: str = "Mensal", sinal: str = None):
-    agora = datetime.utcnow()
-    delta = timedelta(days=30)
-    if periodo == "Diário":
-        delta = timedelta(days=1)
-    elif periodo == "Semanal":
-        delta = timedelta(weeks=1)
-    elif periodo == "Anual":
-        delta = timedelta(days=365)
-
-    data_limite = agora - delta
-    pipeline = [
-        {
-            "$match": {
-                "data": {"$gte": data_limite},
-                **({"nome": sinal.upper()} if sinal else {}),
-            }
-        },
-        {
-            "$group": {
-                "_id": {
-                    "data": {"$dateToString": {"format": "%Y-%m-%d", "date": "$data"}},
-                    "username": "$autor",
-                },
-                "total": {"$sum": 1},
-            }
-        },
-        {"$sort": {"_id.data": 1}},
-    ]
-    return await db_sinais.sinais.aggregate(pipeline).to_list(1000)
-
-
-# --- ROTA DE EXPORTAÇÃO (CORRIGIDA) ---
-@app.get("/admin/export/report")
-async def export_report(user: str = "all", sinal: str = "all", date: str = ""):
-    query = {}
+@app.get("/admin/export/report", tags=["Relatórios"])
+async def exportar_pdf_auditoria(user: str = "all", sinal: str = "all"):
+    """Gera um PDF detalhado da situação do banco de dados"""
+    filtro = {}
     if user != "all":
-        query["autor"] = user
+        filtro["autor"] = user
     if sinal != "all":
-        query["nome"] = sinal.upper()
-    if date:
-        dt_obj = datetime.strptime(date, "%Y-%m-%d")
-        query["data"] = {"$gte": dt_obj, "$lt": dt_obj + timedelta(days=1)}
+        filtro["nome"] = sinal.upper()
 
-    # Busca os dados reais para o PDF
-    total_coletado = await db_sinais.sinais.count_documents(query)
+    total = await db_sinais.sinais.count_documents(filtro)
 
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_fill_color(15, 23, 42)  # Fundo escuro slate-900
+
+    # Header
+    pdf.set_fill_color(30, 41, 59)
+    pdf.rect(0, 0, 210, 40, "F")
     pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Arial", "B", 24)
+    pdf.cell(190, 20, "TECHLIBRAS - RELATORIO", 0, 1, "C")
 
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(190, 15, "TECHLIBRAS - RELATORIO DE AUDITORIA", 1, 1, "C")
-
+    # Body
     pdf.set_text_color(0, 0, 0)
-    pdf.ln(10)
     pdf.set_font("Arial", "", 12)
+    pdf.ln(20)
     pdf.cell(
-        0,
-        10,
-        f"Filtros aplicados: Usuario: {user} | Sinal: {sinal} | Data: {date}",
-        0,
-        1,
+        0, 10, f"Data do Relatorio: {datetime.now().strftime('%d/%m/%Y %H:%M')}", 0, 1
     )
-    pdf.cell(0, 10, f"Total de amostras encontradas no banco: {total_coletado}", 0, 1)
+    pdf.cell(0, 10, f"Usuario Filtrado: {user}", 0, 1)
+    pdf.cell(0, 10, f"Sinal Filtrado: {sinal}", 0, 1)
     pdf.ln(10)
+    pdf.set_font("Arial", "B", 14)
+    pdf.cell(0, 10, f"Total de Amostras Validadas: {total}", 0, 1)
+
+    pdf.ln(20)
+    pdf.set_font("Arial", "I", 10)
     pdf.multi_cell(
         0,
         10,
-        "Este documento valida a consistencia dos dados coletados para treinamento do modelo de IA.",
+        "Este documento serve como prova de consistencia de dados para o treinamento do modelo de Deep Learning LSTM. Os dados sao coletados via MediaPipe Hands.",
     )
 
-    pdf_bytes = pdf.output(dest="S").encode("latin-1")
+    pdf_content = pdf.output(dest="S").encode("latin-1")
 
     return Response(
-        content=pdf_bytes,
+        content=pdf_content,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f"attachment; filename=auditoria_{user}_{sinal}.pdf"
+            "Content-Disposition": f"attachment; filename=relatorio_techlibras.pdf"
         },
     )
 
 
-@app.post("/chatbot-ajuda")
-async def chatbot_ajuda(dados: dict):
-    mapa_navegacao = {
+# --- ASSISTENTE VIRTUAL (CHATBOT GESTUAL) ---
+
+
+@app.post("/chatbot-ajuda", tags=["Acessibilidade"])
+async def processar_comando_chatbot(dados: dict):
+    """Interpreta sinais ou texto para navegar no sistema"""
+    comandos_map = {
+        "SAIR": "logout",
         "TREINO": "/treino",
         "ESTUDAR": "/treino",
         "TRADUZIR": "/traducao",
-        "TRADUTOR": "/traducao",
-        "CONVERSAR": "/traducao",
         "AJUDA": "abrir_ajuda",
-        "SAIR": "logout",
-        "ENTRAR": "/login",
-        "CADASTRO": "/cadastro",
-        "CONFIGURAÇÃO": "/perfil",
+        "PERFIL": "/perfil",
     }
 
     if "landmarks" in dados:
-        pontos = []
-        for lm in dados["landmarks"]:
-            pontos.extend([lm["x"], lm["y"], lm["z"]])
+        # Reutiliza a lógica de predição para entender o sinal do comando
+        try:
+            fake_seq = DadosPrevisao(sequencia=[dados["landmarks"]] * 20)
+            res = await prever_sinal(fake_seq)
+            sinal_detectado = res.get("sinal")
 
-        previsao = modelo.predict([pontos])[0]
-        if previsao in mapa_navegacao:
-            res = mapa_navegacao[previsao]
-
-            if res in ["logout", "abrir_ajuda"]:
-                return {"status": "success", "acao": res}
-
-            return {
-                "status": "success",
-                "acao": "navegar",
-                "rota": res,
-            }
+            if sinal_detectado in comandos_map:
+                rota = comandos_map[sinal_detectado]
+                return {
+                    "status": "success",
+                    "acao": "navegar" if "/" in rota else rota,
+                    "rota": rota,
+                }
+        except:
+            pass
 
     if "texto" in dados:
         texto = dados["texto"].upper()
-        for palavra, rota in mapa_navegacao.items():
-            if palavra in texto:
-                if rota in ["logout", "abrir_ajuda"]:
-                    return {"status": "success", "acao": rota}
-                return {"status": "success", "acao": "navegar", "rota": rota}
+        for cmd, acao in comandos_map.items():
+            if cmd in texto:
+                return {
+                    "status": "success",
+                    "acao": "navegar" if "/" in acao else acao,
+                    "rota": acao,
+                }
 
-    return {"status": "error", "message": "Comando não reconhecido"}
+    return {"status": "error", "message": "Comando não identificado pelo TechBot."}
 
 
-@app.post("/salvar-resultado-treino")
-async def salvar_resultado_treino(dados: dict):
-    historico = {
-        "username": dados["username"],
-        "sinal_esperado": dados["sinal_esperado"],
-        "sinal_feito": dados["sinal_feito"],
-        "correto": dados["correto"],
-        "data": datetime.now(),
-    }
-    await db_users.historico_treino.insert_one(historico)
+# --- CRUDS DE ADMINISTRAÇÃO ---
+
+
+@app.delete("/admin/usuarios/{username}", tags=["Admin Tools"])
+async def remover_usuario(username: str):
+    if username == "admin_master":
+        return {"status": "error", "message": "Proibido remover super-user."}
+
+    res = await db_users.usuarios.delete_one({"username": username})
+    if res.deleted_count > 0:
+        return {"status": "success", "message": f"Usuário {username} removido."}
+    return {"status": "error", "message": "Falha ao localizar usuário."}
+
+
+@app.patch("/admin/usuarios/{username}", tags=["Admin Tools"])
+async def atualizar_dados_usuario(username: str, update: UserUpdate):
+    data = update.dict(exclude_unset=True)
+    if "password" in data:
+        data["password"] = get_password_hash(data["password"])
+
+    res = await db_users.usuarios.update_one({"username": username}, {"$set": data})
     return {"status": "success"}
 
 
-@app.get("/stats-estudante/{username}")
-async def stats_estudante(username: str):
-    agora = datetime.now()
-    sete_dias_atras = agora - timedelta(days=7)
+# --- INICIALIZAÇÃO DO SERVIDOR ---
 
-    pipeline = [
-        {"$match": {"username": username, "data": {"$gte": sete_dias_atras}}},
-        {
-            "$group": {
-                "_id": {"$dateToString": {"format": "%d/%m", "date": "$data"}},
-                "acertos": {"$sum": {"$cond": ["$correto", 1, 0]}},
-                "erros": {"$sum": {"$cond": ["$correto", 0, 1]}},
-            }
-        },
-        {"$sort": {"_id": 1}},
-    ]
+if __name__ == "__main__":
+    import uvicorn
 
-    cursor = db_users.historico_treino.aggregate(pipeline)
-    res = await cursor.to_list(length=7)
-    return res
+    logger.info("Iniciando servidor Uvicorn...")
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+# Final do Arquivo - TechLibras Backend Core
+# ==============================================================================
