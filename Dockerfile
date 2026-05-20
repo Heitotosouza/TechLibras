@@ -1,5 +1,5 @@
 # Usa uma imagem estável do Python
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 # INSTALA DEPENDÊNCIAS DE SISTEMA (Essencial para áudio, vídeo e Whisper)
 RUN apt-get update && apt-get install -y \
