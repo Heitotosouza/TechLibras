@@ -23,8 +23,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copia o código do Back-End
 COPY Back-End/ .
 
-# Porta padrão do Hugging Face
-EXPOSE 7860
+# AJUSTADO: Porta padrão que o Render mapeia internamente
+EXPOSE 10000
 
-# Rodando a API
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
+# AJUSTADO: O Uvicorn agora escuta na porta 10000 nativa do Render
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000"]

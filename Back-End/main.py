@@ -25,7 +25,7 @@ HISTORY_PATH = os.path.join(BASE_DIR, "training", "history.json")
 app.include_router(admin_router, prefix="/admin")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -211,5 +211,5 @@ async def obter_contagem_sinais_global():
 
 if __name__ == "__main__":
     import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    porta = int(os.getenv("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=porta)
