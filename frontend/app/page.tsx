@@ -1,18 +1,23 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import CameraIA from "./components/CameraIA";
 import Sidebar from "./components/Sidebar";
-import AcessoCard from "./components/AcessoCard";
+import AcessoCard from "./auth/AcessoCard";
 import AdminPanel from "./components/AdminPanel";
 import StudentDashboard from "./components/StudentDashboard";
+import { NeuralMonitor } from "./components/NeuralMonitor";
 
 export default function Home() {
   const router = useRouter();
+
+  // --- ESTADOS DE SESSÃO E USUÁRIO ---
   const [role, setRole] = useState<"ESTUDANTE" | "TREINADOR" | "ADMIN" | null>(
     null,
   );
   const [username, setUsername] = useState<string | null>(null);
+
+  // --- ESTADOS DE COLETA E INTERFACE ---
   const [contagem, setContagem] = useState({});
   const [nomeSinal, setNomeSinal] = useState("");
   const [landmarksAtuais, setLandmarksAtuais] = useState<any>(null);
@@ -21,75 +26,115 @@ export default function Home() {
   const [tipoSinal, setTipoSinal] = useState<"ESTATICO" | "DINAMICO">(
     "ESTATICO",
   );
-  const META = 300;
 
+  // --- ESTADOS DO MONITOR NEURAL (TECLA D) ---
+  const [viewMode, setViewMode] = useState<"OFF" | "BASICA" | "COMPLETA">(
+    "OFF",
+  );
+  const [neuralDebug, setNeuralDebug] = useState({
+    probabilidades: {},
+    ativacoes: Array(64).fill(0),
+    tempo_ms: 0,
+  });
+
+  const META = 300;
+  const API_BASE = "http://localhost:8000";
+
+  // --- EFEITO: CARREGAR SESSÃO AO INICIAR ---
   useEffect(() => {
     const savedUser = localStorage.getItem("techlibras_user");
     if (savedUser) {
-      const { username, role } = JSON.parse(savedUser);
-      setUsername(username);
-      setRole(role);
+      try {
+        const { username, role } = JSON.parse(savedUser);
+        setUsername(username);
+        setRole(role);
+      } catch (e) {
+        console.error("Erro ao carregar sessão");
+      }
     }
   }, []);
 
-  const atualizarContagem = async () => {
-    try {
-      const res = await fetch("http://localhost:8000/contagem-sinais");
-      setContagem(await res.json());
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
+  // --- EFEITO: ATALHOS DE TECLADO ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "h") setAjudaAberta((prev) => !prev);
+      const key = e.key.toLowerCase();
+      if (key === "h") setAjudaAberta((prev) => !prev);
+      if (key === "d") {
+        setViewMode((prev) => {
+          if (prev === "OFF") return "BASICA";
+          if (prev === "BASICA") return "COMPLETA";
+          if (prev === "COMPLETA") return "TREINO";
+          return "OFF";
+        });
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  useEffect(() => {
-    if (role && role !== "ESTUDANTE") atualizarContagem();
-  }, [role]);
+  // --- FUNÇÃO: PROCESSAR PREDIÇÃO DA IA ---
+  const aoReceberPredicao = (resultado: any) => {
+    if (resultado.debug) {
+      setNeuralDebug({
+        probabilidades: resultado.debug.probabilidades || {},
+        ativacoes: resultado.debug.ativacoes || Array(64).fill(0),
+        tempo_ms: resultado.debug.tempo_ms || 0,
+      });
+      if (resultado.sinal === "DADOS" && resultado.confianca > 0.9) {
+        setViewMode("BASICA");
+      }
+    }
+  };
 
-  // LOGICA DE GRAVAÇÃO ATUALIZADA
+  // --- FUNÇÃO: ATUALIZAR CONTAGEM DO DATASET ---
+  const atualizarContagem = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/contagem-sinais`);
+      if (res.ok) {
+        const data = await res.json();
+        setContagem(data);
+      }
+    } catch (e) {
+      console.error("Erro ao buscar contagem:", e);
+    }
+  }, [API_BASE]);
+
+  useEffect(() => {
+    if (role) atualizarContagem();
+  }, [role, atualizarContagem]);
+
+  // --- FUNÇÃO: GRAVAR SINAL (ESTÁTICO OU DINÂMICO) ---
   const handleGravarSequencia = async () => {
     if (!nomeSinal) return alert("Digite o nome do sinal!");
-    if (!landmarksAtuais) return alert("IA não detectou as mãos.");
 
     setEstaGravando(true);
     let framesColetados: any[] = [];
     let contador = 0;
 
     const timer = setInterval(async () => {
+      // Captura o landmark atual do estado vindo da CameraIA
       if (tipoSinal === "DINAMICO") {
         framesColetados.push(landmarksAtuais);
       } else {
-        // Modo Estático: Envia imediatamente (Burst Mode)
-        enviarAmostra(landmarksAtuais, "ESTATICO", 1);
+        await enviarAmostra(landmarksAtuais, "ESTATICO", 1);
       }
 
       contador++;
-
       if (contador >= 20) {
         clearInterval(timer);
-
-        // Se for dinâmico, envia o pacote de frames agora
         if (tipoSinal === "DINAMICO") {
           await enviarAmostra(framesColetados, "DINAMICO", 1);
         }
-
         setEstaGravando(false);
-        atualizarContagem();
-        alert(`Sucesso! Coleta de "${nomeSinal}" (${tipoSinal}) finalizada.`);
+        atualizarContagem(); // Atualiza a sidebar após salvar
+        alert(`Coleta de "${nomeSinal.toUpperCase()}" finalizada com sucesso!`);
       }
-    }, 120); // ~8 frames por segundo
+    }, 120);
   };
 
   const enviarAmostra = async (dados: any, tipo: string, qtd: number) => {
     try {
-      await fetch("http://localhost:8000/salvar-sinal", {
+      await fetch(`${API_BASE}/salvar-sinal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -98,17 +143,17 @@ export default function Home() {
           tipo: tipo,
           autor: username,
           quantidade: qtd,
-          data_hora: new Date().toISOString(),
         }),
       });
     } catch (err) {
-      console.error("Erro ao salvar:", err);
+      console.error("Erro ao salvar sinal:", err);
     }
   };
 
+  // --- FUNÇÕES DE AUTH ---
   const handleLogin = async (u: string, p: string) => {
     try {
-      const res = await fetch("http://localhost:8000/login", {
+      const res = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: u, password: p }),
@@ -125,96 +170,100 @@ export default function Home() {
         alert(data.message);
       }
     } catch (e) {
-      alert("Erro ao conectar ao servidor.");
+      alert("Erro de conexão com o servidor.");
     }
   };
 
   const handleLogout = () => {
     localStorage.removeItem("techlibras_user");
-    setRole(null);
-    setUsername(null);
-    router.push("/");
+    window.location.reload();
   };
 
   const handleCadastro = async (u: string, p: string) => {
     try {
-      const res = await fetch("http://localhost:8000/usuarios/cadastrar", {
+      const res = await fetch(`${API_BASE}/admin/usuarios/cadastrar`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: u, password: p, role: "ESTUDANTE" }),
       });
       const data = await res.json();
-      if (data.status === "success") alert("Conta criada!");
+      if (data.status === "success") alert("Conta criada com sucesso!");
       else alert(data.message);
     } catch (e) {
       alert("Erro ao cadastrar.");
     }
   };
 
-  const entrarComoVisitante = () => {
-    const visitorData = { username: "Visitante", role: "ESTUDANTE" as const };
-    setRole(visitorData.role);
-    setUsername(visitorData.username);
-    localStorage.setItem("techlibras_user", JSON.stringify(visitorData));
-  };
-
+  // --- TELA DE LOGIN ---
   if (!role) {
     return (
-      <main className="flex flex-col items-center justify-center min-h-screen bg-slate-900 p-4">
-        <div className="w-full max-w-md flex flex-col gap-6 text-center">
-          <h1 className="text-5xl font-black text-emerald-400 italic">
+      <main className="flex flex-col items-center justify-center min-h-screen bg-slate-900 p-4 font-sans">
+        <div className="w-full max-md flex flex-col gap-6 text-center">
+          <h1 className="text-6xl font-black text-emerald-400 italic tracking-tighter uppercase">
             TechLibras
           </h1>
           <AcessoCard onLogin={handleLogin} onCadastrar={handleCadastro} />
           <button
-            onClick={entrarComoVisitante}
-            className="text-emerald-400 font-bold border-2 border-dashed border-emerald-500/20 p-4 rounded-3xl"
+            onClick={() => {
+              setRole("ESTUDANTE");
+              setUsername("Visitante");
+            }}
+            className="text-emerald-400 font-bold border-2 border-dashed border-emerald-500/20 p-4 rounded-3xl hover:bg-emerald-500/5 transition-all"
           >
-            🚀 Modo Estudo
+            🚀 Explorar como Visitante
           </button>
         </div>
       </main>
     );
   }
 
+  // --- DASHBOARD PRINCIPAL ---
   return (
-    <main className="min-h-screen bg-slate-900 text-white overflow-hidden">
+    <main className="min-h-screen bg-[#0b1120] text-white overflow-hidden relative">
+      <NeuralMonitor data={neuralDebug} mode={viewMode} />
+
       <div className="flex h-screen">
-        <div className="flex-1 flex flex-col items-center p-8 overflow-y-auto">
+        <div className="flex-1 flex flex-col items-center p-8 overflow-y-auto custom-scrollbar">
           <header className="mb-10 text-center relative w-full max-w-6xl">
             <button
               onClick={handleLogout}
-              className="absolute right-0 top-0 px-4 py-2 bg-red-500/10 text-red-400 rounded-xl font-bold uppercase text-[10px]"
+              className="absolute right-0 top-0 px-4 py-2 bg-red-500/10 text-red-500 rounded-xl font-black uppercase text-[10px] hover:bg-red-500 hover:text-white transition-all"
             >
-              Sair
+              Encerrar Sessão
             </button>
-            <h1 className="text-4xl font-black text-emerald-400 italic">
+            <h1 className="text-4xl font-black text-emerald-400 italic tracking-tighter uppercase">
               TechLibras
             </h1>
-            <p className="text-slate-400">
-              Olá, <span className="text-emerald-200">{username}</span>
+            <p className="text-slate-500 font-medium uppercase tracking-widest text-xs mt-1">
+              Terminal: <span className="text-emerald-400">{username}</span> |
+              Privilégio: <span className="text-blue-400">{role}</span>
             </p>
           </header>
 
+          {/* CONTEÚDO POR CARGO */}
           {role === "ESTUDANTE" && <StudentDashboard username={username} />}
 
           {role === "TREINADOR" && (
-            <>
-              <CameraIA modo="TREINO" onLandmarksUpdate={setLandmarksAtuais} />
-              <div className="mt-8 p-6 bg-slate-800 rounded-3xl border border-slate-700 w-full max-w-[640px]">
-                {/* SELETOR DE TIPO */}
-                <div className="flex gap-2 mb-4 bg-slate-900 p-1 rounded-2xl w-fit border border-slate-700">
+            <div className="flex flex-col items-center w-full animate-in fade-in zoom-in-95">
+              <CameraIA
+                modo="TREINO"
+                onLandmarksUpdate={setLandmarksAtuais}
+                onPrediction={aoReceberPredicao}
+              />
+
+              <div className="mt-8 p-8 bg-slate-900/50 rounded-[2.5rem] border border-slate-800 w-full max-w-[700px] backdrop-blur-sm shadow-2xl">
+                <div className="flex gap-2 mb-6 bg-slate-950 p-1.5 rounded-2xl w-fit border border-slate-800">
                   <button
                     onClick={() => setTipoSinal("ESTATICO")}
-                    className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${tipoSinal === "ESTATICO" ? "bg-emerald-600 text-white" : "text-slate-500"}`}
+                    className={`px-6 py-2.5 rounded-xl text-[10px] font-black transition-all ${tipoSinal === "ESTATICO" ? "bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.4)]" : "text-slate-500 hover:text-slate-300"}`}
                   >
-                    🖼️ ESTÁTICO
+                    🖼️ GESTO ESTÁTICO
                   </button>
                   <button
                     onClick={() => setTipoSinal("DINAMICO")}
-                    className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${tipoSinal === "DINAMICO" ? "bg-blue-600 text-white" : "text-slate-500"}`}
+                    className={`px-6 py-2.5 rounded-xl text-[10px] font-black transition-all ${tipoSinal === "DINAMICO" ? "bg-blue-500 text-white shadow-[0_0_15px_rgba(59,130,246,0.4)]" : "text-slate-500 hover:text-slate-300"}`}
                   >
-                    🎬 DINÂMICO
+                    🎬 GESTO DINÂMICO
                   </button>
                 </div>
 
@@ -223,70 +272,57 @@ export default function Home() {
                     type="text"
                     value={nomeSinal}
                     onChange={(e) => setNomeSinal(e.target.value)}
-                    className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-white outline-none focus:border-emerald-500"
-                    placeholder="NOME DO SINAL..."
+                    className="flex-1 bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-bold placeholder:text-slate-700"
+                    placeholder="QUAL O NOME DO SINAL?"
                   />
                   <button
                     onClick={handleGravarSequencia}
                     disabled={estaGravando}
-                    className={`px-8 py-2 rounded-xl font-bold transition-all ${estaGravando ? "bg-red-600 animate-pulse" : "bg-emerald-600 hover:bg-emerald-500"}`}
+                    className={`px-10 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${estaGravando ? "bg-red-600 animate-pulse cursor-not-allowed" : "bg-emerald-500 hover:bg-emerald-400 text-slate-900"}`}
                   >
-                    {estaGravando
-                      ? "GRAVANDO..."
-                      : tipoSinal === "DINAMICO"
-                        ? "GRAVAR MOVIMENTO"
-                        : "GRAVAR 20x"}
+                    {estaGravando ? "Gravando..." : "Salvar Agora"}
                   </button>
                 </div>
+                <p className="text-[10px] text-slate-600 mt-4 text-center font-bold uppercase tracking-widest">
+                  Atenção: Os dados salvos serão revisados pela administração.
+                </p>
               </div>
-            </>
+            </div>
           )}
 
           {role === "ADMIN" && <AdminPanel />}
         </div>
 
-        {role !== "ESTUDANTE" && (
+        {/* SIDEBAR GLOBAL (Apenas para TREINADOR) */}
+        {role === "TREINADOR" && ( // Mudamos de !== ESTUDANTE para === TREINADOR
           <Sidebar
             contagem={contagem}
             meta={META}
+            loading={estaGravando}
             onRefresh={atualizarContagem}
           />
         )}
       </div>
 
+      {/* MODAL DE AJUDA */}
       {ajudaAberta && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md">
-          <div className="bg-slate-800 border-2 border-emerald-500 p-8 rounded-[3rem] w-full max-w-[550px] flex flex-col items-center">
-            <h2 className="text-3xl font-black text-emerald-400 mb-6 italic">
-              Assistente IA
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-xl p-4">
+          <div className="bg-slate-900 border-2 border-emerald-500/30 p-10 rounded-[3.5rem] w-full max-w-[600px] flex flex-col items-center shadow-2xl">
+            <h2 className="text-3xl font-black text-emerald-400 mb-2 italic uppercase">
+              Assistente Core
             </h2>
-            <div className="w-full aspect-video bg-slate-900 rounded-[2rem] overflow-hidden border-4 border-slate-700 mb-6">
+            <div className="w-full aspect-video bg-black rounded-[2.5rem] overflow-hidden border-4 border-slate-800 mb-8">
               <CameraIA
                 modo="ESTUDO"
-                onLandmarksUpdate={async (landmarks) => {
-                  if (ajudaAberta) {
-                    const res = await fetch(
-                      "http://localhost:8000/chatbot-ajuda",
-                      {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ landmarks }),
-                      },
-                    );
-                    const data = await res.json();
-                    if (data.acao === "logout") {
-                      handleLogout();
-                      setAjudaAberta(false);
-                    }
-                  }
-                }}
+                onPrediction={aoReceberPredicao}
+                onLandmarksUpdate={() => {}}
               />
             </div>
             <button
               onClick={() => setAjudaAberta(false)}
-              className="px-10 py-3 bg-slate-700 rounded-full font-bold uppercase text-xs"
+              className="px-12 py-4 bg-slate-800 rounded-full font-black uppercase text-[10px] text-slate-300 hover:bg-red-500 hover:text-white transition-all tracking-widest"
             >
-              Fechar (H)
+              Encerrar Chat (H)
             </button>
           </div>
         </div>

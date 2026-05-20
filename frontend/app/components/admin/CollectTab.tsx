@@ -1,14 +1,187 @@
 "use client";
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import {
+  Trash2,
+  Database,
+  Search,
+  Camera,
+  VideoOff,
+  Loader2,
+} from "lucide-react";
 
 interface CollectProps {
   stats: { total: number; meta: number };
+  userRole?: string;
+  currentUser?: string;
+  tipoCaptura?: "ESTATICO" | "DINAMICO";
 }
 
-export default function CollectTab({ stats }: CollectProps) {
+export default function CollectTab({
+  stats,
+  userRole,
+  currentUser,
+  tipoCaptura = "ESTATICO",
+}: CollectProps) {
   const [nomeSinal, setNomeSinal] = useState("");
   const [streamAtiva, setStreamAtiva] = useState(false);
+  const [busca, setBusca] = useState("");
+  const [listaSinaisFull, setListaSinaisFull] = useState<any[]>([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const [progress, setProgress] = useState(0);
+
   const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const handLandmarksRef = useRef<any>(null);
+
+  // --- LÓGICA DE GRAVAÇÃO (EXTRAÍDA PARA REUSO) ---
+  const iniciarGravacaoMestre = useCallback(async () => {
+    // Validações básicas antes de iniciar
+    if (!nomeSinal) return; // Não alerta no atalho para não atrapalhar o fluxo
+    if (isRecording || !handLandmarksRef.current) return;
+
+    setIsRecording(true);
+    setProgress(0);
+
+    const totalAmostras = 10;
+    let capturasFeitas = 0;
+
+    const intervalo = setInterval(async () => {
+      if (handLandmarksRef.current) {
+        try {
+          const res = await fetch("http://localhost:8000/salvar-sinal", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              nome: nomeSinal.toUpperCase(),
+              autor: currentUser || "Admin",
+              tipo: tipoCaptura,
+              landmarks: handLandmarksRef.current,
+              data_coleta: new Date().toISOString(),
+            }),
+          });
+
+          if (res.ok) {
+            capturasFeitas++;
+            setProgress(Math.round((capturasFeitas / totalAmostras) * 100));
+          }
+        } catch (err) {
+          console.error("Erro na captura:", err);
+        }
+      }
+
+      if (capturasFeitas >= totalAmostras) {
+        clearInterval(intervalo);
+        setIsRecording(false);
+        // setNomeSinal(""); <-- LINHA REMOVIDA PARA PERSISTÊNCIA
+        carregarSinaisDetalhado();
+      }
+    }, 200);
+  }, [nomeSinal, isRecording, currentUser, tipoCaptura]);
+
+  // --- ATALHO DE TECLADO (TECLA G) ---
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Se o usuário estiver digitando no input, não dispara o atalho
+      if (e.target instanceof HTMLInputElement) return;
+
+      if (e.key.toLowerCase() === "g") {
+        iniciarGravacaoMestre();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [iniciarGravacaoMestre]);
+
+  // --- MEDIAPIPE (CARREGAMENTO VIA CDN) ---
+  useEffect(() => {
+    const loadScripts = async () => {
+      const scripts = [
+        "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js",
+        "https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js",
+      ];
+      for (const src of scripts) {
+        if (!document.querySelector(`script[src="${src}"]`)) {
+          const script = document.createElement("script");
+          script.src = src;
+          script.async = true;
+          document.body.appendChild(script);
+          await new Promise((resolve) => (script.onload = resolve));
+        }
+      }
+      if (streamAtiva && videoRef.current) {
+        const mpHands = (window as any).Hands;
+        const mpDrawing = window as any;
+        if (!mpHands) return;
+
+        const hands = new mpHands({
+          locateFile: (file: string) =>
+            `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+        });
+
+        hands.setOptions({
+          maxNumHands: 1,
+          modelComplexity: 1,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+        });
+
+        hands.onResults((results: any) => {
+          if (!canvasRef.current) return;
+          const canvasCtx = canvasRef.current.getContext("2d")!;
+          canvasCtx.save();
+          canvasCtx.clearRect(
+            0,
+            0,
+            canvasRef.current.width,
+            canvasRef.current.height,
+          );
+          if (
+            results.multiHandLandmarks &&
+            results.multiHandLandmarks.length > 0
+          ) {
+            handLandmarksRef.current = results.multiHandLandmarks[0];
+            mpDrawing.drawConnectors(
+              canvasCtx,
+              handLandmarksRef.current,
+              mpDrawing.HAND_CONNECTIONS,
+              { color: "#10b981", lineWidth: 3 },
+            );
+            mpDrawing.drawLandmarks(canvasCtx, handLandmarksRef.current, {
+              color: "#ffffff",
+              lineWidth: 1,
+              radius: 2,
+            });
+          } else {
+            handLandmarksRef.current = null;
+          }
+          canvasCtx.restore();
+        });
+
+        const processVideo = async () => {
+          if (videoRef.current && videoRef.current.readyState >= 2) {
+            try {
+              await hands.send({ image: videoRef.current });
+            } catch (e) {}
+          }
+          requestAnimationFrame(processVideo);
+        };
+        processVideo();
+      }
+    };
+    loadScripts();
+  }, [streamAtiva]);
+
+  // --- UTILITÁRIOS ---
+  const carregarSinaisDetalhado = async () => {
+    try {
+      const res = await fetch(
+        "http://localhost:8000/admin/lista-sinais-detalhada",
+      );
+      const sinais = await res.json();
+      setListaSinaisFull(Array.isArray(sinais) ? sinais : []);
+    } catch (err) {}
+  };
 
   const ligarCamera = async () => {
     try {
@@ -17,85 +190,152 @@ export default function CollectTab({ stats }: CollectProps) {
         videoRef.current.srcObject = stream;
         setStreamAtiva(true);
       }
-    } catch (err) {
-      console.error("Webcam Error:", err);
-    }
+    } catch (err) {}
   };
 
   useEffect(() => {
     ligarCamera();
-    return () => {
-      if (videoRef.current?.srcObject) {
-        const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
-        tracks.forEach((t) => t.stop());
-      }
-    };
+    carregarSinaisDetalhado();
   }, []);
 
+  const sinaisFiltrados = listaSinaisFull.filter((s) =>
+    s.nome?.toLowerCase().includes(busca.toLowerCase()),
+  );
+
   return (
-    <div className="max-w-5xl mx-auto space-y-8 animate-in fade-in duration-500">
+    <div className="max-w-6xl mx-auto space-y-10 pb-20">
       <header className="flex justify-between items-end">
         <div>
           <h2 className="text-6xl font-black text-white italic tracking-tighter uppercase">
-            Coleta
+            Coleta <span className="text-emerald-500">Live</span>
           </h2>
-          <div className="h-2 w-32 bg-emerald-500 mt-2" />
+          <div className="h-2 w-48 bg-emerald-600 mt-2 rounded-full" />
+          <p className="text-[10px] text-slate-500 font-bold mt-2 uppercase tracking-widest">
+            Atalho: Pressione [G] para gravar
+          </p>
         </div>
-        <div className="text-right">
-          <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest">
-            Sinais no MongoDB Atlas
-          </p>
-          <p className="text-3xl font-black text-emerald-500">
-            {stats?.total || 0} / {stats?.meta || 500}
-          </p>
+        <div className="text-right text-3xl font-black text-white italic">
+          {stats?.total || 0}{" "}
+          <span className="text-emerald-500">/ {stats?.meta || 500}</span>
         </div>
       </header>
 
-      {/* Container do Vídeo */}
-      <div className="relative aspect-video w-full bg-slate-950 rounded-[3rem] border-4 border-slate-800 overflow-hidden shadow-2xl flex items-center justify-center group">
+      <div className="relative aspect-video w-full bg-slate-950 rounded-[3.5rem] border-4 border-slate-800 overflow-hidden shadow-2xl">
         <video
           ref={videoRef}
           autoPlay
           playsInline
-          className={`w-full h-full object-cover transition-opacity duration-1000 ${
-            streamAtiva ? "opacity-100" : "opacity-0"
-          }`}
+          className="w-full h-full object-cover"
         />
-        
-        {!streamAtiva && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/50 backdrop-blur-sm">
-            <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mb-4" />
-            <p className="text-slate-500 font-black text-xl italic uppercase tracking-[0.5em]">
-              Câmera Offline
-            </p>
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 w-full h-full pointer-events-none"
+          width={1280}
+          height={720}
+        />
+
+        {isRecording && (
+          <div className="absolute inset-x-10 bottom-10 bg-black/80 backdrop-blur-md p-6 rounded-3xl border border-emerald-500/50 z-10 animate-pulse">
+            <div className="flex justify-between mb-3 text-emerald-400 font-black uppercase text-xs">
+              <span>Capturando Rajada LSTM: {progress}%</span>
+              <Loader2 className="animate-spin" size={16} />
+            </div>
+            <div className="w-full h-3 bg-slate-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-emerald-500"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
           </div>
         )}
-
-        <div className="absolute top-8 left-8 bg-black/40 backdrop-blur-md border border-white/10 px-6 py-2 rounded-full">
-           <span className="flex items-center gap-3 text-emerald-400 font-black text-[10px] uppercase tracking-widest">
-             <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-             Live Stream: Active
-           </span>
-        </div>
       </div>
 
-      {/* Painel de Ação */}
-      <div className="bg-slate-900/80 p-8 rounded-[2.5rem] border border-slate-800 flex flex-col md:flex-row gap-4 shadow-2xl">
+      <div className="bg-slate-900/90 p-8 rounded-[2.5rem] border border-slate-800 flex flex-col md:flex-row gap-4 shadow-2xl">
         <input
           type="text"
-          placeholder="NOME DO SINAL (EX: OBRIGADO)"
-          className="flex-1 bg-slate-950 border-2 border-slate-800 rounded-2xl px-8 py-5 font-bold text-white uppercase focus:border-emerald-500 outline-none transition-all placeholder:text-slate-700"
+          placeholder="NOME DO SINAL (EX: L)"
+          className="flex-1 bg-slate-950 border-2 border-slate-800 rounded-2xl px-8 py-5 font-bold text-white uppercase focus:border-emerald-500 outline-none"
           value={nomeSinal}
           onChange={(e) => setNomeSinal(e.target.value)}
         />
-        <button 
-          onClick={() => alert(`Gravando: ${nomeSinal}`)}
-          disabled={!nomeSinal || !streamAtiva}
-          className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-black px-12 py-5 rounded-2xl uppercase italic active:scale-95 transition-all shadow-lg"
+        <button
+          onClick={iniciarGravacaoMestre}
+          disabled={!nomeSinal || !streamAtiva || isRecording}
+          className={`px-12 py-5 rounded-2xl font-black uppercase italic transition-all flex items-center gap-3 ${
+            isRecording
+              ? "bg-red-600 text-white"
+              : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_20px_rgba(16,185,129,0.4)]"
+          }`}
         >
-          Gravar Amostra
+          {isRecording ? (
+            <Loader2 className="animate-spin" />
+          ) : (
+            <Camera size={20} />
+          )}
+          {isRecording ? "Gravando..." : "Gravar (G)"}
         </button>
       </div>
+
+      <section className="bg-slate-900/50 rounded-[3rem] border border-slate-800 overflow-hidden shadow-2xl">
+        <div className="p-8 border-b border-slate-800 flex justify-between items-center bg-slate-950/30">
+          <h3 className="text-2xl font-black text-white italic uppercase flex items-center gap-3">
+            <Database className="text-emerald-500" /> Histórico de Captura
+          </h3>
+          <div className="relative w-64">
+            <Search
+              className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600"
+              size={16}
+            />
+            <input
+              type="text"
+              placeholder="BUSCAR..."
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 pl-10 pr-4 text-[10px] font-bold text-white uppercase outline-none"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+            />
+          </div>
+        </div>
+        <div className="max-h-[300px] overflow-y-auto">
+          <table className="w-full text-left">
+            <thead className="sticky top-0 bg-slate-950 z-10 text-slate-600 text-[10px] uppercase font-black">
+              <tr>
+                <th className="p-6">Sinal</th>
+                <th className="p-6">Autor</th>
+                <th className="p-6">Tipo</th>
+                <th className="p-6 text-center">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/50">
+              {sinaisFiltrados.map((sinal) => (
+                <tr
+                  key={sinal._id}
+                  className="hover:bg-slate-800/20 transition-colors group"
+                >
+                  <td className="p-6">
+                    <span className="bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-3 py-1 rounded-lg font-black text-xs italic">
+                      {sinal.nome}
+                    </span>
+                  </td>
+                  <td className="p-6 font-bold text-slate-300 text-sm uppercase">
+                    {sinal.autor}
+                  </td>
+                  <td className="p-6 text-[10px] text-slate-400 font-bold uppercase italic">
+                    {sinal.tipo}
+                  </td>
+                  <td className="p-6 text-center">
+                    <button
+                      onClick={() => {}}
+                      className="text-slate-700 hover:text-red-500 transition-all"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }

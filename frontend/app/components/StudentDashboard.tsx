@@ -55,7 +55,7 @@ export default function StudentDashboard({ username }: StudentDashboardProps) {
         "Mão aberta batendo levemente na lateral da outra mão fechada.",
       dica: "A palma de apoio deve estar voltada para o corpo.",
       cat: "SISTEMA",
-      path: "/ajuda",
+      path: "#", // Mantém na dashboard
       arquivo: "/sinais/ajudar.mp4",
     },
     {
@@ -66,7 +66,7 @@ export default function StudentDashboard({ username }: StudentDashboardProps) {
       instrucao: "Dedo indicador simulando escrita na palma da mão oposta.",
       dica: "A palma da mão deve estar bem visível.",
       cat: "CONTA",
-      path: "/cadastro",
+      path: "/auth",
       arquivo: "/sinais/criar.mp4",
     },
     {
@@ -77,7 +77,7 @@ export default function StudentDashboard({ username }: StudentDashboardProps) {
       instrucao: "Mão em 'V' entrando no espaço entre os dedos da outra mão.",
       dica: "Inicie o movimento fora do centro.",
       cat: "CONTA",
-      path: "/login",
+      path: "/auth",
       arquivo: "/sinais/entrar.mp4",
     },
     {
@@ -88,7 +88,7 @@ export default function StudentDashboard({ username }: StudentDashboardProps) {
       instrucao: "Mão aberta fechando os dedos rapidamente para o lado.",
       dica: "O movimento deve ser seco e rápido.",
       cat: "SISTEMA",
-      path: "/logout",
+      path: "LOGOUT",
       arquivo: "/sinais/sair.mp4",
     },
   ];
@@ -146,7 +146,6 @@ export default function StudentDashboard({ username }: StudentDashboardProps) {
                 </div>
 
                 <div className="mb-6 flex-1 flex items-center justify-center bg-black/20 rounded-3xl border border-white/5 overflow-hidden">
-                  {/* Verifica se o arquivo termina em .mp4 para usar a tag correta */}
                   {activeCmd.arquivo.endsWith(".mp4") ? (
                     <video
                       key={activeCmd.arquivo}
@@ -228,7 +227,23 @@ export default function StudentDashboard({ username }: StudentDashboardProps) {
               key={cmd.titulo}
               onMouseEnter={() => setActiveCmd(cmd)}
               onMouseLeave={() => setActiveCmd(null)}
-              onClick={() => router.push(cmd.path)}
+              onClick={() => {
+                // Lógica de Sair
+                if (cmd.path === "LOGOUT") {
+                  localStorage.removeItem("token");
+                  router.push("/");
+                  return;
+                }
+
+                // Lógica de Ajuda (fica na página)
+                if (cmd.path === "#") {
+                  console.log("Suporte solicitado");
+                  return;
+                }
+
+                // Navegação para as páginas reais
+                router.push(cmd.path);
+              }}
               whileHover={{ scale: 1.02 }}
               className={`group relative border rounded-[2.5rem] p-6 transition-all duration-500 cursor-pointer ${colorVariants[cmd.cor]}`}
             >
@@ -246,6 +261,10 @@ export default function StudentDashboard({ username }: StudentDashboardProps) {
               <p className="text-[11px] text-slate-400 leading-snug group-hover:text-slate-200">
                 {cmd.desc}
               </p>
+
+              <div className="flex justify-end mt-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                <ChevronRight size={16} />
+              </div>
             </motion.div>
           ))}
         </div>

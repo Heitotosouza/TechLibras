@@ -1,21 +1,36 @@
 @import "tailwindcss";
 
-body {
-  -webkit-user-select: none;
-  user-select: none;
-  background-color: #020617;
+html, body {
+  height: 100%; /* Use 100% em vez de 100vh para melhor compatibilidade mobile */
+  margin: 0;
+  padding: 0;
+  background-color: #0b1120;
+  /* Remova o overflow: hidden daqui se quiser que o login respire, 
+     ou mantenha se for travar o app todo como um Kioske */
+  overflow: hidden; 
+}
+
+/* Custom Scrollbar atualizada */
+.custom-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.custom-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+* {
+  box-sizing: border-box;
+  /* Mantenha o user-select: none apenas se for realmente necessário, 
+     pois impede o usuário de clicar nos inputs de login às vezes */
+}
+
+/* No final do seu globals.css */
+.custom-scrollbar {
+  overflow-y: auto !important; /* Força o scroll mesmo com o body hidden */
+  scrollbar-width: none;
 }
 
 .custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(16, 185, 129, 0.2);
-  border-radius: 10px;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(16, 185, 129, 0.4);
+  display: none; /* Esconde a barra feia, mas mantém o scroll funcional */
 }

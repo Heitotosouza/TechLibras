@@ -152,6 +152,7 @@ export default function StatsTab({ users }: { users: any[] }) {
             Comparativo de Treineiros
           </h3>
           <div className="flex gap-4 items-center bg-slate-950 p-2 rounded-2xl border border-slate-800">
+            {/* Treineiro 1 */}
             <select
               className="bg-transparent text-white px-4 py-2 font-bold outline-none cursor-pointer"
               value={compUsers.user1}
@@ -159,14 +160,24 @@ export default function StatsTab({ users }: { users: any[] }) {
                 setCompUsers({ ...compUsers, user1: e.target.value })
               }
             >
-              <option value="">Treineiro 1</option>
-              {users.map((u) => (
-                <option key={u._id} value={u.username} className="bg-slate-900">
-                  {u.username}
-                </option>
-              ))}
+              <option value="" className="bg-slate-900">
+                Treineiro 1
+              </option>
+              {users &&
+                users.map((u) => (
+                  <option
+                    key={u._id || u.username}
+                    value={u.username}
+                    className="bg-slate-900"
+                  >
+                    {u.username}
+                  </option>
+                ))}
             </select>
+
             <span className="text-slate-700 font-black italic">VS</span>
+
+            {/* Treineiro 2 */}
             <select
               className="bg-transparent text-white px-4 py-2 font-bold outline-none cursor-pointer"
               value={compUsers.user2}
@@ -174,12 +185,19 @@ export default function StatsTab({ users }: { users: any[] }) {
                 setCompUsers({ ...compUsers, user2: e.target.value })
               }
             >
-              <option value="">Treineiro 2</option>
-              {users.map((u) => (
-                <option key={u._id} value={u.username} className="bg-slate-900">
-                  {u.username}
-                </option>
-              ))}
+              <option value="" className="bg-slate-900">
+                Treineiro 2
+              </option>
+              {users &&
+                users.map((u) => (
+                  <option
+                    key={u._id || u.username}
+                    value={u.username}
+                    className="bg-slate-900"
+                  >
+                    {u.username}
+                  </option>
+                ))}
             </select>
           </div>
         </div>
@@ -240,19 +258,32 @@ export default function StatsTab({ users }: { users: any[] }) {
           </h3>
           <div className="space-y-3 overflow-y-auto max-h-[400px] pr-2 custom-scrollbar">
             {listaSinais.length > 0 ? (
-              listaSinais.map((sinal) => (
-                <button
-                  key={sinal}
-                  onClick={() => setSelectedSinal(sinal)}
-                  className={`w-full text-left p-4 rounded-2xl font-bold transition-all border ${
-                    selectedSinal === sinal
-                      ? "bg-emerald-500/20 border-emerald-500 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.1)]"
-                      : "bg-slate-950/50 border-slate-800 text-slate-500 hover:border-slate-700"
-                  }`}
-                >
-                  Sinal: <span className="uppercase">{sinal}</span>
-                </button>
-              ))
+              listaSinais.map(
+                (
+                  sinal: any, // Usamos any aqui para prevenir quebra
+                ) => (
+                  <button
+                    key={typeof sinal === "object" ? sinal.nome : sinal}
+                    onClick={() =>
+                      setSelectedSinal(
+                        typeof sinal === "object" ? sinal.nome : sinal,
+                      )
+                    }
+                    className={`w-full text-left p-4 rounded-2xl font-bold transition-all border ${
+                      selectedSinal ===
+                      (typeof sinal === "object" ? sinal.nome : sinal)
+                        ? "bg-emerald-500/20 border-emerald-500 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.1)]"
+                        : "bg-slate-950/50 border-slate-800 text-slate-500 hover:border-slate-700"
+                    }`}
+                  >
+                    {/* AQUI É O PONTO CRÍTICO: */}
+                    Sinal:{" "}
+                    <span className="uppercase">
+                      {typeof sinal === "object" ? sinal.nome : sinal}
+                    </span>
+                  </button>
+                ),
+              )
             ) : (
               <p className="text-slate-600 italic text-sm">
                 Carregando sinais do Atlas...

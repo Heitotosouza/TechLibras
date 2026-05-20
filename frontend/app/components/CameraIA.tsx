@@ -1,17 +1,19 @@
 "use client";
-import React, { useRef, useEffect, useState } from "react";
+import React, { useRef, useEffect, useState, useCallback } from "react";
 import Webcam from "react-webcam";
 
 interface CameraIAProps {
   modo: "ESTUDO" | "TREINO";
   onSinalDetectado?: (sinal: string, confianca: number) => void;
   onLandmarksUpdate?: (landmarks: any) => void;
+  onPrediction?: (resultado: any) => void;
 }
 
 export default function CameraIA({
   modo,
   onSinalDetectado,
   onLandmarksUpdate,
+  onPrediction,
 }: CameraIAProps) {
   const [loaded, setLoaded] = useState(false);
   const [previsao, setPrevisao] = useState<{
@@ -22,11 +24,15 @@ export default function CameraIA({
   const webcamRef = useRef<Webcam>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // BUFFER PARA O LSTM (Guarda os últimos 20 frames)
+  // BUFFER DE MEMÓRIA
   const frameBuffer = useRef<any[]>([]);
 
-  // Função para carregar os scripts dinamicamente (Garante que as bolinhas apareçam)
-  const loadScripts = async () => {
+  // REFS DE PERSISTÊNCIA (O SEGREDO DA ESTABILIDADE)
+  const lastValidLandmarks = useRef<any>(null);
+  const framesMissingCounter = useRef(0);
+  const MAX_GHOST_FRAMES = 12; // Aguenta até ~0.4s de sumiço sem quebrar a sequência
+
+  const loadScripts = useCallback(async () => {
     const scripts = [
       "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js",
       "https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js",
@@ -43,29 +49,32 @@ export default function CameraIA({
       }
     }
     startAI();
-  };
+  }, [loaded]);
 
   const detectarSinal = async (sequenciaFrames: any[]) => {
+    if (sequenciaFrames.length < 20) return;
     try {
       const response = await fetch("http://localhost:8000/prever", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // ENVIANDO A SEQUENCIA COMPLETA PARA O LSTM
         body: JSON.stringify({ sequencia: sequenciaFrames }),
       });
       const data = await response.json();
+
       if (data.sinal && data.status !== "error") {
-        setPrevisao(data);
-        if (onSinalDetectado) onSinalDetectado(data.sinal, data.confianca);
+        setPrevisao({ sinal: data.sinal, confianca: data.confianca });
+        onSinalDetectado?.(data.sinal, data.confianca);
+        onPrediction?.(data);
       }
     } catch (e) {
-      console.error("Erro na detecção Back-End:", e);
+      console.error("Erro na detecção:", e);
     }
   };
 
   const startAI = () => {
     const win = window as any;
-    if (!win.Hands || loaded) return;
+    if (!win.Hands || !win.Camera || loaded || !webcamRef.current?.video)
+      return;
 
     const hands = new win.Hands({
       locateFile: (file: string) =>
@@ -74,9 +83,9 @@ export default function CameraIA({
 
     hands.setOptions({
       maxNumHands: 1,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7,
+      modelComplexity: 1, // 1 é mais estável que o 0
+      minDetectionConfidence: 0.4, // Baixamos para ser mais "grudento"
+      minTrackingConfidence: 0.8,
     });
 
     hands.onResults((results: any) => {
@@ -84,7 +93,6 @@ export default function CameraIA({
 
       const video = webcamRef.current.video;
       const canvasCtx = canvasRef.current.getContext("2d")!;
-
       canvasRef.current.width = video.videoWidth;
       canvasRef.current.height = video.videoHeight;
 
@@ -96,61 +104,92 @@ export default function CameraIA({
         canvasRef.current.height,
       );
 
-      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        const landmarks = results.multiHandLandmarks[0];
+      const detectedLandmarks = results.multiHandLandmarks?.[0];
 
-        // DESENHANDO AS BOLINHAS
-        win.drawConnectors(canvasCtx, landmarks, win.HAND_CONNECTIONS, {
+      if (detectedLandmarks) {
+        // --- CASO 1: ACHOU A MÃO ---
+        lastValidLandmarks.current = detectedLandmarks;
+        framesMissingCounter.current = 0;
+
+        win.drawConnectors(canvasCtx, detectedLandmarks, win.HAND_CONNECTIONS, {
           color: "#00FF00",
-          lineWidth: 4,
+          lineWidth: 5,
         });
-        win.drawLandmarks(canvasCtx, landmarks, {
+        win.drawLandmarks(canvasCtx, detectedLandmarks, {
           color: "#FF0000",
           lineWidth: 2,
         });
 
-        // ATUALIZANDO O BUFFER PARA O LSTM
-        frameBuffer.current.push(landmarks);
-        if (frameBuffer.current.length > 20) frameBuffer.current.shift(); // Mantém sempre os 20 mais recentes
+        frameBuffer.current.push(detectedLandmarks);
+      } else if (
+        lastValidLandmarks.current &&
+        framesMissingCounter.current < MAX_GHOST_FRAMES
+      ) {
+        // --- CASO 2: SUMIU, MAS USAMOS PERSISTÊNCIA (GHOSTING) ---
+        framesMissingCounter.current++;
 
-        if (onLandmarksUpdate) onLandmarksUpdate(landmarks);
+        // Desenha um "fantasma" visual para o usuário saber que o sistema está segurando a pose
+        canvasCtx.globalAlpha = 0.2;
+        win.drawConnectors(
+          canvasCtx,
+          lastValidLandmarks.current,
+          win.HAND_CONNECTIONS,
+          { color: "#ffffff", lineWidth: 2 },
+        );
+        canvasCtx.globalAlpha = 1.0;
+
+        // ENVIAMOS A ÚLTIMA POSIÇÃO PARA O BUFFER (Isso mantém a LSTM viva!)
+        frameBuffer.current.push(lastValidLandmarks.current);
       } else {
-        setPrevisao(null);
+        // --- CASO 3: SUMIU DE VEZ (RESET) ---
+        if (frameBuffer.current.length > 0) {
+          // frameBuffer.current = [];
+          // lastValidLandmarks.current = null;
+          setPrevisao(null);
+        }
       }
+
+      // Mantém sempre os últimos 20 frames
+      if (frameBuffer.current.length > 20) frameBuffer.current.shift();
+
       canvasCtx.restore();
     });
 
     const camera = new win.Camera(webcamRef.current.video, {
       onFrame: async () => {
-        await hands.send({ image: webcamRef.current.video! });
+        if (webcamRef.current?.video)
+          await hands.send({ image: webcamRef.current.video });
       },
       width: 640,
       height: 480,
     });
+
     camera.start();
     setLoaded(true);
   };
 
   useEffect(() => {
     loadScripts();
-
-    // Intervalo de predição (envia o buffer a cada 500ms)
     const predictInterval = setInterval(() => {
-      if (loaded && frameBuffer.current.length === 20 && modo === "ESTUDO") {
+      // SÓ CHAMA O BACK-END SE O BUFFER ESTIVER CHEIO (20 frames estáveis)
+      if (loaded && frameBuffer.current.length === 20) {
         detectarSinal(frameBuffer.current);
       }
-    }, 500);
+    }, 250); // Frequência de análise
 
     return () => clearInterval(predictInterval);
-  }, [loaded, modo]);
+  }, [loaded, loadScripts]);
 
   return (
-    <div className="relative border-4 border-slate-700 rounded-3xl overflow-hidden bg-black w-[640px] h-[480px] shadow-2xl">
+    <div className="relative border-8 border-slate-900 rounded-[3rem] overflow-hidden bg-black w-[640px] h-[480px] shadow-2xl">
       <Webcam
         audio={false}
         ref={webcamRef}
         className="w-full h-full object-cover"
         mirrored={true}
+        onUserMedia={() => {
+          if (!loaded) startAI();
+        }}
       />
       <canvas
         ref={canvasRef}
@@ -158,20 +197,17 @@ export default function CameraIA({
         style={{ transform: "scaleX(-1)" }}
       />
 
-      <div className="absolute top-4 left-4 bg-slate-900/80 backdrop-blur-md px-4 py-1 rounded-full border border-slate-700">
-        <span className="text-xs font-bold text-emerald-400">
-          {loaded ? `MODO: ${modo}` : "CARREGANDO IA..."}
-        </span>
-      </div>
-
-      {previsao && modo === "ESTUDO" && previsao.confianca > 0.8 && (
-        <div className="absolute top-4 right-4 bg-emerald-600 px-6 py-3 rounded-xl shadow-2xl border-2 border-white animate-in zoom-in duration-300">
-          <p className="text-[10px] uppercase font-bold text-white">
-            Detectado:
-          </p>
-          <p className="text-3xl font-black text-white">{previsao.sinal}</p>
+      <div className="absolute bottom-6 left-6 right-6 flex justify-between items-center pointer-events-none">
+        <div className="bg-slate-950/90 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/10 text-[10px] font-bold text-blue-400 uppercase tracking-widest">
+          Status: {loaded ? "Neural Link Active" : "Connecting..."}
         </div>
-      )}
+
+        {previsao && previsao.confianca > 0.8 && (
+          <div className="bg-emerald-500 text-white px-6 py-2 rounded-2xl font-black italic uppercase shadow-lg border-b-4 border-emerald-700 animate-bounce">
+            {previsao.sinal}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
