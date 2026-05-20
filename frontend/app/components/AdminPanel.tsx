@@ -14,12 +14,43 @@ import StatsTab from "./admin/StatsTab";
 import ReportsTab from "./admin/ReportsTab";
 import Sidebar from "./Sidebar";
 
+// 1. DEFINIÇÃO PROFISSIONAL DE INTERFACES PARA O TYPESCRIPT
+interface User {
+  username: string;
+  role: string;
+  empenho: number;
+  data_criacao?: string;
+}
+
+interface SinalDetalhado {
+  sinal: string;
+  total: number;
+  [key: string]: any;
+}
+
+interface HistoricoTreino {
+  global?: number[];
+  especifico?: number[];
+  accuracy?: number[];
+  loss?: number[];
+  classes?: string[];
+  detalhes_sinais?: Record<string, number[]>;
+}
+
+interface AdminDataState {
+  users: User[];
+  sinais_detalhados: SinalDetalhado[];
+  historico: HistoricoTreino | any[];
+  stats: { total: number; meta: number };
+}
+
 export default function PanelAdmin() {
   const [abaAtiva, setAbaAtiva] = useState("camera");
   const [loading, setLoading] = useState(false);
   const [usuarioLogado, setUsuarioLogado] = useState<any>(null);
 
-  const [data, setData] = useState({
+  // CORRIGIDO: Tipagem explícita adicionada aqui para eliminar o erro 'never[]' do build
+  const [data, setData] = useState<AdminDataState>({
     users: [],
     sinais_detalhados: [],
     historico: [],
@@ -29,7 +60,10 @@ export default function PanelAdmin() {
   const syncData = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
     try {
-      const baseUrl = "http://localhost:8000";
+      // AJUSTADO: Lê a URL do Render em produção, ou usa localhost em desenvolvimento local
+      const baseUrl =
+        process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
       const [uRes, sRes, hRes] = await Promise.all([
         fetch(`${baseUrl}/admin/usuarios/lista`),
         fetch(`${baseUrl}/admin/stats_sinais`),
@@ -83,6 +117,9 @@ export default function PanelAdmin() {
       alert("Erro ao executar ação.");
     }
   };
+
+  // Coleta a URL dinâmica para as ações de clique da Sidebar
+  const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
   return (
     <div className="flex h-screen w-full bg-[#0b1120] text-slate-200 font-sans overflow-hidden">
@@ -191,17 +228,15 @@ export default function PanelAdmin() {
         </div>
       </main>
 
-      {/* 3. SIDEBAR DIREITA (DATASET) - FIXA E SEM CORTES */}
+      {/* 3. SIDEBAR DIREITA (DATASET) */}
       {abaAtiva === "camera" && (
         <aside className="w-96 shrink-0 border-l border-slate-800 bg-slate-900 flex flex-col h-full">
-          {/* Header Superior sutil */}
           <div className="px-8 pt-8 pb-4 shrink-0">
             <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-500">
               Dataset Details
             </h2>
           </div>
 
-          {/* O componente Sidebar agora controla o próprio scroll internamente */}
           <div className="flex-1 px-8 pb-8 min-h-0">
             <Sidebar
               contagem={data.sinais_detalhados}
@@ -209,14 +244,14 @@ export default function PanelAdmin() {
               onRefresh={() => syncData(true)}
               onLimparSinal={(label) =>
                 handleAction(
-                  `http://localhost:8000/admin/limpar-sinal/${label}`,
+                  `${apiBaseUrl}/admin/limpar-sinal/${label}`,
                   "DELETE",
                   `Limpar "${label}"?`,
                 )
               }
               onLimparBanco={() =>
                 handleAction(
-                  `http://localhost:8000/admin/reset-banco`,
+                  `${apiBaseUrl}/admin/reset-banco`,
                   "DELETE",
                   "⚠️ RESETAR TODO O BANCO?",
                 )
