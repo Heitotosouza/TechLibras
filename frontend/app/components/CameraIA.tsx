@@ -71,9 +71,11 @@ export default function CameraIA({
 
     aiStarted.current = true;
 
+    // AQUI ESTÁ A BLINDAGEM: Força o motor interno a buscar o .wasm, .data e .binarypb
+    // da MESMA versão exata da CDN unificada que o navegador consegue ler sem dar Abort.
     const hands = new win.Hands({
       locateFile: (file: string) => {
-        return `/mediapipe/${file}`;
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675119248/${file}`;
       },
     });
 
