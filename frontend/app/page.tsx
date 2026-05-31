@@ -17,6 +17,9 @@ export default function Home() {
   );
   const [username, setUsername] = useState<string | null>(null);
 
+  // --- ESTADO DE ALTERNÂNCIA (LOGIN / CADASTRO) ---
+  const [isLogin, setIsLogin] = useState(true);
+
   // --- ESTADOS DE COLETA E INTERFACE ---
   const [contagem, setContagem] = useState({});
   const [nomeSinal, setNomeSinal] = useState("");
@@ -112,7 +115,6 @@ export default function Home() {
     let contador = 0;
 
     const timer = setInterval(async () => {
-      // Captura o landmark atual do estado vindo da CameraIA
       if (tipoSinal === "DINAMICO") {
         framesColetados.push(landmarksAtuais);
       } else {
@@ -126,7 +128,7 @@ export default function Home() {
           await enviarAmostra(framesColetados, "DINAMICO", 1);
         }
         setEstaGravando(false);
-        atualizarContagem(); // Atualiza a sidebar após salvar
+        atualizarContagem();
         alert(`Coleta de "${nomeSinal.toUpperCase()}" finalizada com sucesso!`);
       }
     }, 120);
@@ -158,7 +160,14 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: u, password: p }),
       });
+
       const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.detail || "ID de Operador ou Senha incorretos.");
+        return;
+      }
+
       if (data.status === "success") {
         setRole(data.role);
         setUsername(data.username);
@@ -166,11 +175,9 @@ export default function Home() {
           "techlibras_user",
           JSON.stringify({ username: data.username, role: data.role }),
         );
-      } else {
-        alert(data.message);
       }
     } catch (e) {
-      alert("Erro de conexão com o servidor.");
+      alert("Erro de conexão com o servidor backend.");
     }
   };
 
@@ -186,32 +193,48 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: u, password: p, role: "ESTUDANTE" }),
       });
+
       const data = await res.json();
-      if (data.status === "success") alert("Conta criada com sucesso!");
-      else alert(data.message);
+
+      if (!res.ok) {
+        alert(data.detail || "Não foi possível efetuar o registro.");
+        return;
+      }
+
+      if (data.status === "success") {
+        alert("Conta implantada com sucesso! Autenticando sessão...");
+        // Faz o login automático após cadastrar
+        await handleLogin(u, p);
+      }
     } catch (e) {
-      alert("Erro ao cadastrar.");
+      alert(
+        "Erro ao cadastrar. Verifique se o backend em Python está rodando.",
+      );
     }
+  };
+
+  const handleBypass = () => {
+    setRole("ESTUDANTE");
+    setUsername("Visitante");
+    localStorage.setItem(
+      "techlibras_user",
+      JSON.stringify({ username: "Visitante", role: "ESTUDANTE" }),
+    );
   };
 
   // --- TELA DE LOGIN ---
   if (!role) {
     return (
       <main className="flex flex-col items-center justify-center min-h-screen bg-slate-900 p-4 font-sans">
-        <div className="w-full max-md flex flex-col gap-6 text-center">
-          <h1 className="text-6xl font-black text-emerald-400 italic tracking-tighter uppercase">
-            TechLibras
-          </h1>
-          <AcessoCard onLogin={handleLogin} onCadastrar={handleCadastro} />
-          <button
-            onClick={() => {
-              setRole("ESTUDANTE");
-              setUsername("Visitante");
-            }}
-            className="text-emerald-400 font-bold border-2 border-dashed border-emerald-500/20 p-4 rounded-3xl hover:bg-emerald-500/5 transition-all"
-          >
-            🚀 Explorar como Visitante
-          </button>
+        <div className="w-full max-w-md flex flex-col gap-6 text-center">
+          {/* Repassando os estados de controle que o seu AcessoCard exige */}
+          <AcessoCard
+            isLogin={isLogin}
+            setIsLogin={setIsLogin}
+            onLogin={handleLogin}
+            onCadastrar={handleCadastro}
+            onBypass={handleBypass}
+          />
         </div>
       </main>
     );
@@ -294,7 +317,7 @@ export default function Home() {
         </div>
 
         {/* SIDEBAR GLOBAL (Apenas para TREINADOR) */}
-        {role === "TREINADOR" && ( // Mudamos de !== ESTUDANTE para === TREINADOR
+        {role === "TREINADOR" && (
           <Sidebar
             contagem={contagem}
             meta={META}

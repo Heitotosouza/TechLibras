@@ -1,23 +1,78 @@
 "use client";
-import AcessoCard from "./AcessoCard";
+import React, { useState } from "react";
+import { useRouter } from "next/navigation";
+import AcessoCard from "./AcessoCard"; // Importa o card que está na mesma pasta
 
 export default function AuthPage() {
-  return (
-    // 'fixed inset-0' faz a tela de login flutuar por cima do fluxo quebrado do layout pai
-    <div className="fixed inset-0 w-screen h-screen bg-[#0b1120] z-[9999] overflow-hidden grid place-items-center p-4">
-      {/* Background Tech */}
-      <div
-        className="absolute inset-0 opacity-10 pointer-events-none"
-        style={{
-          backgroundImage: "radial-gradient(#1e293b 1px, transparent 1px)",
-          backgroundSize: "40px 40px",
-        }}
-      />
+  const router = useRouter();
 
-      {/* O card renderiza isolado aqui, o 'place-items-center' garante o meio exato */}
-      <div className="relative z-10">
-        <AcessoCard onLogin={() => {}} onCadastrar={() => {}} />
-      </div>
-    </div>
+  // O estado que alterna as telas vive aqui agora
+  const [isLogin, setIsLogin] = useState(true);
+  const BACKEND_URL = "http://127.0.0.1:8000";
+
+  const handleLogin = async (username: string, pass: string) => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password: pass }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        alert(data.detail || "Erro nas credenciais.");
+        return;
+      }
+
+      if (data.status === "success") {
+        localStorage.setItem("username", data.username);
+        localStorage.setItem("role", data.role);
+        router.push("/dashboard");
+      }
+    } catch (error) {
+      console.error("Erro:", error);
+      alert("Servidor backend offline ou erro de rede.");
+    }
+  };
+
+  const handleCadastrar = async (username: string, pass: string) => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/admin/usuarios/cadastrar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password: pass }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        alert(data.detail || "Erro ao registrar usuário.");
+        return;
+      }
+
+      if (data.status === "success") {
+        alert("Operador registrado! Iniciando sessão...");
+        await handleLogin(username, pass);
+      }
+    } catch (error) {
+      console.error("Erro:", error);
+    }
+  };
+
+  const handleBypass = () => {
+    localStorage.setItem("username", "Visitante Anônimo");
+    localStorage.setItem("role", "VISITANTE");
+    router.push("/dashboard");
+  };
+
+  return (
+    <AcessoCard
+      isLogin={isLogin}
+      setIsLogin={setIsLogin}
+      onLogin={handleLogin}
+      onCadastrar={handleCadastrar}
+      onBypass={handleBypass}
+    />
   );
 }

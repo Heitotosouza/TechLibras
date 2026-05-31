@@ -13,26 +13,20 @@ if not MONGODB_URL:
 
 client = motor.motor_asyncio.AsyncIOMotorClient(MONGODB_URL)
 
-# --- AJUSTE CONFORME A IMAGEM DO COMPASS ---
 
-# 1. Onde estão seus usuários (banco minúsculo na imagem)
 db_users = client.techlibras_db
 
-# 2. Onde estão seus 300 sinais (banco maiúsculo na imagem)
 db_sinais = client.TechLibras
 
-# --- REFERÊNCIAS DE COLEÇÕES ---
 usuarios_col = db_users.usuarios
 sinais_col = db_sinais.sinais
 
 
 async def check_db():
     try:
-        # Tenta dar um ping no servidor
         await client.admin.command("ping")
         print("✅ Conexão com MongoDB estabelecida!")
 
-        # Log de verificação para você ter certeza que está no caminho certo
         n_sinais = await sinais_col.count_documents({})
         print(f"📊 Sinais encontrados no banco 'TechLibras': {n_sinais}")
 

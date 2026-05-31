@@ -1,13 +1,21 @@
-from fastapi import FastAPI, HTTPException, Response
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional
-from datetime import datetime
-import numpy as np
-import time
 import os
 import json
+import time
+from datetime import datetime
+from typing import List, Optional
+import numpy as np
+
+from fastapi import FastAPI, HTTPException, Response, status
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from passlib.context import CryptContext
+from dotenv import load_dotenv
+
+# Carrega as configurações do arquivo .env (seja local ou no Render)
+load_dotenv()
+
+# Cria a lista de origens permitidas (Se não achar no .env, usa localhost por padrão)
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 
 from core.core_ia import ai_engine
 from core.admin_tools import router as admin_router
@@ -23,6 +31,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 HISTORY_PATH = os.path.join(BASE_DIR, "training", "history.json")
 
 app.include_router(admin_router, prefix="/admin")
+
+# Agora o Python sabe exatamente o que é CORS_ORIGINS!
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -32,6 +42,9 @@ app.add_middleware(
 )
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
+
+
+# --- MODELOS DE ENTRADA (PYDANTIC) ---
 
 
 class Landmark(BaseModel):
@@ -48,15 +61,28 @@ class DadosPrevisao(BaseModel):
 class UserCreate(BaseModel):
     username: str
     password: str
-    role: str = "TREINADOR"
+    role: str = (
+        "ESTUDANTE"  # Alterado padrão para ESTUDANTE conforme o seu fluxo de alunos
+    )
+
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+
+# --- FUNÇÕES DE SEGURANÇA ---
 
 
 def get_password_hash(password):
     return pwd_context.hash(password)
 
 
-def verify_password(p, h):
-    return pwd_context.verify(p, h)
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+# --- ROTAS DO SISTEMA ---
 
 
 @app.get("/admin/training-history", tags=["Admin"])
@@ -153,25 +179,43 @@ def prever_sinal(dados: DadosPrevisao):
 
 
 @app.post("/auth/login", tags=["Auth"])
-async def login(dados: dict):
-    user = await db_users.usuarios.find_one({"username": dados.get("username")})
-    if user and (
-        verify_password(dados.get("password"), user["password"])
-        or user["password"] == dados.get("password")
-    ):
-        return {
-            "status": "success",
-            "username": user["username"],
-            "role": user.get("role"),
-            "empenho": user.get("empenho", 0),
-        }
-    return {"status": "error", "message": "Credenciais inválidas."}
+async def login(dados: UserLogin):
+    # 1. Busca o usuário no banco correto de forma assíncrona
+    user = await db_users.usuarios.find_one({"username": dados.username})
+
+    # 2. Se o usuário não existir, interrompe com erro 401 explicitamente
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="ID de Operador não encontrado no sistema.",
+        )
+
+    # 3. VALIDAÇÃO REAL: Verifica estritamente o hash criptográfico
+    if not verify_password(dados.password, user["password"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Código de segurança incorreto.",
+        )
+
+    # 4. Retorno de sucesso mapeado com o frontend
+    return {
+        "status": "success",
+        "username": user["username"],
+        "role": user.get("role", "ESTUDANTE"),
+        "empenho": user.get("empenho", 0),
+    }
 
 
 @app.post("/admin/usuarios/cadastrar", tags=["Auth"])
 async def cadastrar_usuario(user: UserCreate):
+    # 1. Impede a duplicação de cadastros idênticos
     if await db_users.usuarios.find_one({"username": user.username}):
-        return {"status": "error", "message": "Usuário já existe."}
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Este ID de Operador já está registrado.",
+        )
+
+    # 2. Converte a senha recebida em hash seguro e insere no banco
     await db_users.usuarios.insert_one(
         {
             "username": user.username,
@@ -181,7 +225,7 @@ async def cadastrar_usuario(user: UserCreate):
             "data_criacao": datetime.utcnow(),
         }
     )
-    return {"status": "success"}
+    return {"status": "success", "message": "Credenciais implantadas com sucesso."}
 
 
 @app.post("/salvar-sinal", tags=["Coleta"])
@@ -211,5 +255,6 @@ async def obter_contagem_sinais_global():
 
 if __name__ == "__main__":
     import uvicorn
-    porta = int(os.getenv("PORT", 10000))
+
+    porta = int(os.getenv("PORT", 8000))  # 8000 para rodar certinho local
     uvicorn.run(app, host="0.0.0.0", port=porta)
