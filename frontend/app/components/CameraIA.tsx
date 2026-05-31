@@ -32,35 +32,15 @@ export default function CameraIA({
   const framesMissingCounter = useRef(0);
   const MAX_GHOST_FRAMES = 12; // Aguenta até ~0.4s de sumiço sem quebrar a sequência
 
-  const loadScripts = useCallback(async () => {
-    // CORREÇÃO CRÍTICA: Travando a versão do ecossistema MediaPipe Hands para evitar quebras de CDN
-    const VERSION = "0.4.1646424638";
-    const scripts = [
-      `https://cdn.jsdelivr.net/npm/@mediapipe/hands@${VERSION}/hands.js`,
-      `https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@${VERSION}/drawing_utils.js`,
-      `https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@${VERSION}/camera_utils.js`,
-    ];
-
-    for (const src of scripts) {
-      if (!document.querySelector(`script[src="${src}"]`)) {
-        const script = document.createElement("script");
-        script.src = src;
-        script.async = true;
-        document.body.appendChild(script);
-        await new Promise((resolve) => (script.onload = resolve));
-      }
-    }
-    startAI();
-  }, [loaded]);
+  // Ref de controle para evitar inicializações duplicadas da IA
+  const aiStarted = useRef(false);
 
   const detectarSinal = async (sequenciaFrames: any[]) => {
     if (sequenciaFrames.length < 20) return;
     try {
-      // 1. Definição inteligente da URL base do Back-end
       const baseUrl =
         process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-      // 2. Mudança para usar a crase (Template Literal) com a rota /prever
       const response = await fetch(`${baseUrl}/prever`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -75,26 +55,32 @@ export default function CameraIA({
       }
     } catch (e) {
       console.error("Erro na detecção:", e);
-      // Evita acúmulo de processamento antigo caso a rede falhe
       frameBuffer.current.shift();
     }
   };
 
-  const startAI = () => {
+  const startAI = useCallback(() => {
     const win = window as any;
-    if (!win.Hands || !win.Camera || loaded || !webcamRef.current?.video)
+    if (
+      !win.Hands ||
+      !win.Camera ||
+      aiStarted.current ||
+      !webcamRef.current?.video
+    )
       return;
+
+    aiStarted.current = true;
 
     const hands = new win.Hands({
       locateFile: (file: string) => {
-        return `https://unpkg.com/@mediapipe/hands/${file}`;
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675119248/${file}`;
       },
     });
 
     hands.setOptions({
       maxNumHands: 1,
-      modelComplexity: 1, // 1 é mais estável que o 0
-      minDetectionConfidence: 0.4, // Baixamos para ser mais "grudento"
+      modelComplexity: 1,
+      minDetectionConfidence: 0.4,
       minTrackingConfidence: 0.8,
     });
 
@@ -117,7 +103,6 @@ export default function CameraIA({
       const detectedLandmarks = results.multiHandLandmarks?.[0];
 
       if (detectedLandmarks) {
-        // --- CASO 1: ACHOU A MÃO ---
         lastValidLandmarks.current = detectedLandmarks;
         framesMissingCounter.current = 0;
 
@@ -131,38 +116,34 @@ export default function CameraIA({
         });
 
         frameBuffer.current.push(detectedLandmarks);
-        // Notifica o componente pai sobre a atualização dos landmarks em tempo real
         onLandmarksUpdate?.(detectedLandmarks);
       } else if (
         lastValidLandmarks.current &&
         framesMissingCounter.current < MAX_GHOST_FRAMES
       ) {
-        // --- CASO 2: SUMIU, MAS USAMOS PERSISTÊNCIA (GHOSTING) ---
         framesMissingCounter.current++;
 
-        // Desenha um "fantasma" visual para o usuário saber que o sistema está segurando a pose
         canvasCtx.globalAlpha = 0.2;
         win.drawConnectors(
           canvasCtx,
           lastValidLandmarks.current,
           win.HAND_CONNECTIONS,
-          { color: "#ffffff", lineWidth: 2 },
+          {
+            color: "#ffffff",
+            lineWidth: 2,
+          },
         );
         canvasCtx.globalAlpha = 1.0;
 
-        // ENVIAMOS A ÚLTIMA POSIÇÃO PARA O BUFFER (Isso mantém a LSTM viva!)
         frameBuffer.current.push(lastValidLandmarks.current);
         onLandmarksUpdate?.(lastValidLandmarks.current);
       } else {
-        // --- CASO 3: SUMIU DE VEZ (RESET) ---
         if (frameBuffer.current.length > 0) {
           setPrevisao(null);
         }
       }
 
-      // Mantém sempre os últimos 20 frames
       if (frameBuffer.current.length > 20) frameBuffer.current.shift();
-
       canvasCtx.restore();
     });
 
@@ -177,19 +158,44 @@ export default function CameraIA({
 
     camera.start();
     setLoaded(true);
-  };
+  }, [onLandmarksUpdate]);
+
+  const loadScripts = useCallback(async () => {
+    const VERSION = "0.4.1675119248";
+    const scripts = [
+      `https://cdn.jsdelivr.net/npm/@mediapipe/hands@${VERSION}/hands.js`,
+      `https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@${VERSION}/drawing_utils.js`,
+      `https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@${VERSION}/camera_utils.js`,
+    ];
+
+    for (const src of scripts) {
+      if (!document.querySelector(`script[src="${src}"]`)) {
+        const script = document.createElement("script");
+        script.src = src;
+        script.async = true;
+        document.body.appendChild(script);
+        await new Promise((resolve) => (script.onload = resolve));
+      }
+    }
+    startAI();
+  }, [startAI]);
 
   useEffect(() => {
-    loadScripts();
+    if (typeof window !== "undefined") {
+      loadScripts();
+    }
+  }, [loadScripts]);
+
+  // Gerenciamento isolado do intervalo de predição para evitar loops infinitos
+  useEffect(() => {
     const predictInterval = setInterval(() => {
-      // SÓ CHAMA O BACK-END SE O BUFFER ESTIVER CHEIO (20 frames estáveis)
       if (loaded && frameBuffer.current.length === 20) {
         detectarSinal(frameBuffer.current);
       }
-    }, 250); // Frequência de análise
+    }, 250);
 
     return () => clearInterval(predictInterval);
-  }, [loaded, loadScripts]);
+  }, [loaded]);
 
   return (
     <div className="relative border-8 border-slate-900 rounded-[3rem] overflow-hidden bg-black w-[640px] h-[480px] shadow-2xl">
