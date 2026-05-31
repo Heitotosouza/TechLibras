@@ -71,11 +71,11 @@ export default function CameraIA({
 
     aiStarted.current = true;
 
-    // AQUI ESTÁ A BLINDAGEM: Força o motor interno a buscar o .wasm, .data e .binarypb
-    // da MESMA versão exata da CDN unificada que o navegador consegue ler sem dar Abort.
+    // CORREÇÃO DA CDN: Usando a rota limpa de release estável do npm.
+    // Isso garante o download do .tflite e do loader sem erros 404.
     const hands = new win.Hands({
       locateFile: (file: string) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675119248/${file}`;
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
       },
     });
 
@@ -182,7 +182,8 @@ export default function CameraIA({
   }, [onLandmarksUpdate]);
 
   const loadScripts = useCallback(async () => {
-    const VERSION = "0.4.1675119248";
+    // Alinhando a versão para a release estável que possui os arquivos complementares funcionais
+    const VERSION = "0.4";
     const scripts = [
       `https://cdn.jsdelivr.net/npm/@mediapipe/hands@${VERSION}/hands.js`,
       `https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@${VERSION}/drawing_utils.js`,
