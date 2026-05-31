@@ -72,7 +72,6 @@ export default function CameraIA({
     aiStarted.current = true;
 
     const hands = new win.Hands({
-      // Puxa os binários estáticos diretamente da sua pasta local mapeada em /public
       locateFile: (file: string) => {
         return `/mediapipe/${file}`;
       },
