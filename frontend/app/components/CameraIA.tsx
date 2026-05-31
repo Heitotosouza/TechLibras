@@ -54,7 +54,12 @@ export default function CameraIA({
   const detectarSinal = async (sequenciaFrames: any[]) => {
     if (sequenciaFrames.length < 20) return;
     try {
-      const response = await fetch("http://localhost:8000/prever", {
+      // 1. Definição inteligente da URL base do Back-end
+      const baseUrl =
+        process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+      // 2. Mudança para usar a crase (Template Literal) com a rota /prever
+      const response = await fetch(`${baseUrl}/prever`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sequencia: sequenciaFrames }),

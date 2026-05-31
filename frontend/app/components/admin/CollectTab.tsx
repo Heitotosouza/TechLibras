@@ -33,10 +33,9 @@ export default function CollectTab({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const handLandmarksRef = useRef<any>(null);
 
-  // --- LÓGICA DE GRAVAÇÃO (EXTRAÍDA PARA REUSO) ---
+  // --- LÓGICA DE GRAVAÇÃO (ATUALIZADA COM URL DINÂMICA) ---
   const iniciarGravacaoMestre = useCallback(async () => {
-    // Validações básicas antes de iniciar
-    if (!nomeSinal) return; // Não alerta no atalho para não atrapalhar o fluxo
+    if (!nomeSinal) return;
     if (isRecording || !handLandmarksRef.current) return;
 
     setIsRecording(true);
@@ -48,7 +47,10 @@ export default function CollectTab({
     const intervalo = setInterval(async () => {
       if (handLandmarksRef.current) {
         try {
-          const res = await fetch("http://localhost:8000/salvar-sinal", {
+          const baseUrl =
+            process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+          const res = await fetch(`${baseUrl}/salvar-sinal`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -72,7 +74,6 @@ export default function CollectTab({
       if (capturasFeitas >= totalAmostras) {
         clearInterval(intervalo);
         setIsRecording(false);
-        // setNomeSinal(""); <-- LINHA REMOVIDA PARA PERSISTÊNCIA
         carregarSinaisDetalhado();
       }
     }, 200);
@@ -81,7 +82,6 @@ export default function CollectTab({
   // --- ATALHO DE TECLADO (TECLA G) ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Se o usuário estiver digitando no input, não dispara o atalho
       if (e.target instanceof HTMLInputElement) return;
 
       if (e.key.toLowerCase() === "g") {
@@ -89,7 +89,7 @@ export default function CollectTab({
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
+    window.window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [iniciarGravacaoMestre]);
 
@@ -172,15 +172,18 @@ export default function CollectTab({
     loadScripts();
   }, [streamAtiva]);
 
-  // --- UTILITÁRIOS ---
+  // --- UTILITÁRIOS (ATUALIZADO COM URL DINÂMICA) ---
   const carregarSinaisDetalhado = async () => {
     try {
-      const res = await fetch(
-        "http://localhost:8000/admin/lista-sinais-detalhada",
-      );
+      const baseUrl =
+        process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+      const res = await fetch(`${baseUrl}/admin/lista-sinais-detalhada`);
       const sinais = await res.json();
       setListaSinaisFull(Array.isArray(sinais) ? sinais : []);
-    } catch (err) {}
+    } catch (err) {
+      console.error("Erro ao carregar lista de sinais:", err);
+    }
   };
 
   const ligarCamera = async () => {

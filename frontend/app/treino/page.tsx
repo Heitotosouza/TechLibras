@@ -19,11 +19,14 @@ export default function TreinoPage() {
 
   const trainingBuffer = useRef<any[]>([]);
 
+  // Definição inteligente da URL base do Back-end (Hospedagem na Nuvem / Localhost)
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
   // 1. BUSCAR SINAIS DO BANCO DE DADOS AO CARREGAR
   useEffect(() => {
     const fetchSinais = async () => {
       try {
-        const res = await fetch("http://localhost:8000/contagem-sinais");
+        const res = await fetch(`${baseUrl}/contagem-sinais`);
         const data = await res.json();
         // data vem como { "OI": 10, "OBRIGADO": 5 ... }
         const nomesSinais = Object.keys(data);
@@ -33,7 +36,7 @@ export default function TreinoPage() {
       }
     };
     fetchSinais();
-  }, []);
+  }, [baseUrl]);
 
   // 2. ATALHOS DE TECLADO (D e H)
   useEffect(() => {
@@ -61,7 +64,7 @@ export default function TreinoPage() {
 
     if (trainingBuffer.current.length >= 20) {
       try {
-        const res = await fetch("http://localhost:8000/prever", {
+        const res = await fetch(`${baseUrl}/prever`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sequencia: trainingBuffer.current }),
@@ -86,6 +89,8 @@ export default function TreinoPage() {
         trainingBuffer.current.splice(0, 10);
       } catch (e) {
         console.error("Erro no treino:", e);
+        // Evita estouro de memória no array caso a API falhe na resposta
+        trainingBuffer.current.splice(0, 10);
       }
     }
   };
@@ -206,6 +211,7 @@ export default function TreinoPage() {
                       <div className="grid grid-cols-8 gap-1">
                         {debugData.ativacoes?.map((val: number, i: number) => (
                           <motion.div
+                            key={i}
                             key={i}
                             animate={{ opacity: val + 0.2, scale: val + 0.8 }}
                             className="h-4 bg-blue-500 rounded-sm"

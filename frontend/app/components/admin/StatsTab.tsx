@@ -29,64 +29,71 @@ ChartJS.register(
 export default function StatsTab({ users }: { users: any[] }) {
   // Filtros
   const [compUsers, setCompUsers] = useState({ user1: "", user2: "" });
-  const [selectedSinal, setSelectedSinal] = useState(""); // Começa vazio até carregar do banco
+  const [selectedSinal, setSelectedSinal] = useState("");
   const [periodo, setPeriodo] = useState("Mensal");
 
   // Estados de Dados Dinâmicos
-  const [listaSinais, setListaSinais] = useState<string[]>([]); // Sinais vindos do Atlas
+  const [listaSinais, setListaSinais] = useState<string[]>([]);
   const [barData, setBarData] = useState<any>(null);
   const [lineData, setLineData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+
+  // URL Base dinâmica inteligente (Render se em produção / Localhost se no PC)
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
   // 1. Efeito para carregar os NOMES dos sinais existentes no Banco
   useEffect(() => {
     const fetchSinaisDisponiveis = async () => {
       try {
-        const res = await fetch("http://localhost:8000/admin/lista-sinais");
+        const res = await fetch(`${baseUrl}/admin/lista-sinais`);
         const sinais = await res.json();
         setListaSinais(sinais);
         if (sinais.length > 0 && !selectedSinal) {
-          setSelectedSinal(sinais[0]); // Seleciona o primeiro sinal da lista por padrão
+          setSelectedSinal(sinais[0]);
         }
       } catch (e) {
         console.error("Erro ao buscar nomes dos sinais:", e);
       }
     };
     fetchSinaisDisponiveis();
-  }, []);
+  }, [baseUrl]);
 
   // 2. Efeito para Carregar Comparativo (Bar Chart)
   useEffect(() => {
     const fetchComparison = async () => {
       if (!compUsers.user1 && !compUsers.user2) return;
 
-      const res = await fetch(
-        `http://localhost:8000/admin/stats/comparison?u1=${compUsers.user1}&u2=${compUsers.user2}`,
-      );
-      const data = await res.json();
+      try {
+        const res = await fetch(
+          `${baseUrl}/admin/stats/comparison?u1=${compUsers.user1}&u2=${compUsers.user2}`,
+        );
+        const data = await res.json();
 
-      setBarData({
-        labels: ["Coletas Totais", "Diversidade de Sinais", "Empenho Geral"],
-        datasets: [
-          {
-            label: compUsers.user1 || "Selecionar Usuário",
-            data: data.user1Metrics,
-            backgroundColor: "rgba(16, 185, 129, 0.5)",
-            borderColor: "#10b981",
-            borderWidth: 2,
-          },
-          {
-            label: compUsers.user2 || "Selecionar Usuário",
-            data: data.user2Metrics,
-            backgroundColor: "rgba(59, 130, 246, 0.5)",
-            borderColor: "#3b82f6",
-            borderWidth: 2,
-          },
-        ],
-      });
+        setBarData({
+          labels: ["Coletas Totais", "Diversidade de Sinais", "Empenho Geral"],
+          datasets: [
+            {
+              label: compUsers.user1 || "Selecionar Usuário",
+              data: data.user1Metrics,
+              backgroundColor: "rgba(16, 185, 129, 0.5)",
+              borderColor: "#10b981",
+              borderWidth: 2,
+            },
+            {
+              label: compUsers.user2 || "Selecionar Usuário",
+              data: data.user2Metrics,
+              backgroundColor: "rgba(59, 130, 246, 0.5)",
+              borderColor: "#3b82f6",
+              borderWidth: 2,
+            },
+          ],
+        });
+      } catch (e) {
+        console.error("Erro ao carregar comparativo:", e);
+      }
     };
     fetchComparison();
-  }, [compUsers]);
+  }, [compUsers, baseUrl]);
 
   // 3. Efeito para Carregar Tendência (Line Chart)
   useEffect(() => {
@@ -96,7 +103,7 @@ export default function StatsTab({ users }: { users: any[] }) {
       setLoading(true);
       try {
         const res = await fetch(
-          `http://localhost:8000/admin/stats/trend?periodo=${periodo}&sinal=${selectedSinal}`,
+          `${baseUrl}/admin/stats/trend?periodo=${periodo}&sinal=${selectedSinal}`,
         );
         const data = await res.json();
 
@@ -113,12 +120,14 @@ export default function StatsTab({ users }: { users: any[] }) {
             },
           ],
         });
+      } catch (e) {
+        console.error("Erro ao buscar dados de tendência:", e);
       } finally {
         setLoading(false);
       }
     };
     fetchTrend();
-  }, [selectedSinal, periodo]);
+  }, [selectedSinal, periodo, baseUrl]);
 
   const chartOptions = {
     responsive: true,
@@ -258,32 +267,27 @@ export default function StatsTab({ users }: { users: any[] }) {
           </h3>
           <div className="space-y-3 overflow-y-auto max-h-[400px] pr-2 custom-scrollbar">
             {listaSinais.length > 0 ? (
-              listaSinais.map(
-                (
-                  sinal: any, // Usamos any aqui para prevenir quebra
-                ) => (
-                  <button
-                    key={typeof sinal === "object" ? sinal.nome : sinal}
-                    onClick={() =>
-                      setSelectedSinal(
-                        typeof sinal === "object" ? sinal.nome : sinal,
-                      )
-                    }
-                    className={`w-full text-left p-4 rounded-2xl font-bold transition-all border ${
-                      selectedSinal ===
-                      (typeof sinal === "object" ? sinal.nome : sinal)
-                        ? "bg-emerald-500/20 border-emerald-500 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.1)]"
-                        : "bg-slate-950/50 border-slate-800 text-slate-500 hover:border-slate-700"
-                    }`}
-                  >
-                    {/* AQUI É O PONTO CRÍTICO: */}
-                    Sinal:{" "}
-                    <span className="uppercase">
-                      {typeof sinal === "object" ? sinal.nome : sinal}
-                    </span>
-                  </button>
-                ),
-              )
+              listaSinais.map((sinal: any) => (
+                <button
+                  key={typeof sinal === "object" ? sinal.nome : sinal}
+                  onClick={() =>
+                    setSelectedSinal(
+                      typeof sinal === "object" ? sinal.nome : sinal,
+                    )
+                  }
+                  className={`w-full text-left p-4 rounded-2xl font-bold transition-all border ${
+                    selectedSinal ===
+                    (typeof sinal === "object" ? sinal.nome : sinal)
+                      ? "bg-emerald-500/20 border-emerald-500 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.1)]"
+                      : "bg-slate-950/50 border-slate-800 text-slate-500 hover:border-slate-700"
+                  }`}
+                >
+                  Sinal:{" "}
+                  <span className="uppercase">
+                    {typeof sinal === "object" ? sinal.nome : sinal}
+                  </span>
+                </button>
+              ))
             ) : (
               <p className="text-slate-600 italic text-sm">
                 Carregando sinais do Atlas...

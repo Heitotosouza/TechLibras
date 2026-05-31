@@ -41,7 +41,7 @@ export default function Home() {
   });
 
   const META = 300;
-  const API_BASE = "http://localhost:8000";
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
   // --- EFEITO: CARREGAR SESSÃO AO INICIAR ---
   useEffect(() => {

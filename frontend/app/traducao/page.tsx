@@ -9,6 +9,9 @@ export default function TraducaoPage() {
   // Criamos um buffer para acumular os 20 frames necessários para o LSTM
   const frameBuffer = useRef<any[]>([]);
 
+  // Definição inteligente da URL base do Back-end
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
   const traduzirSinalParaTexto = async (landmarks: any) => {
     // 1. Adiciona o frame atual ao buffer
     frameBuffer.current.push(landmarks);
@@ -16,10 +19,9 @@ export default function TraducaoPage() {
     // 2. Quando atingir 20 frames, enviamos para a IA
     if (frameBuffer.current.length >= 20) {
       try {
-        const res = await fetch("http://localhost:8000/prever", {
+        const res = await fetch(`${baseUrl}/prever`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          // ATENÇÃO: Mudamos de 'landmarks' para 'sequencia'
           body: JSON.stringify({ sequencia: frameBuffer.current }),
         });
 
@@ -39,6 +41,8 @@ export default function TraducaoPage() {
         frameBuffer.current.splice(0, 5);
       } catch (error) {
         console.error("Erro na tradução:", error);
+        // Evita estouro de memória se a API cair: limpa parcialmente o buffer
+        frameBuffer.current.splice(0, 5);
       }
     }
   };

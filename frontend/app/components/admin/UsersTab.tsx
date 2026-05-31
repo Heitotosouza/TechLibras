@@ -17,12 +17,16 @@ export default function UsersTab({ users, loading, onUpdate }: UsersProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<any>(null);
 
+  // Definição inteligente da URL base do Back-end
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
   // 1. CADASTRO DE NOVO USUÁRIO
   const handleCadastro = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cadastro.username || !cadastro.password)
       return alert("Preencha tudo!");
-    const res = await fetch("http://localhost:8000/admin/usuarios", {
+
+    const res = await fetch(`${baseUrl}/admin/usuarios`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(cadastro),
@@ -47,14 +51,11 @@ export default function UsersTab({ users, loading, onUpdate }: UsersProps) {
     };
     if (editingUser.newPassword) payload.password = editingUser.newPassword;
 
-    const res = await fetch(
-      `http://localhost:8000/admin/usuarios/${editingUser._id}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      },
-    );
+    const res = await fetch(`${baseUrl}/admin/usuarios/${editingUser._id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
 
     if (res.ok) {
       alert("Usuário atualizado!");
@@ -70,7 +71,7 @@ export default function UsersTab({ users, loading, onUpdate }: UsersProps) {
   const deleteUser = async (id: string, username: string) => {
     if (username === "HeitorSS") return alert("Ação negada para Master Admin.");
     if (!confirm(`Excluir permanentemente ${username}?`)) return;
-    await fetch(`http://localhost:8000/admin/usuarios/${id}`, {
+    await fetch(`${baseUrl}/admin/usuarios/${id}`, {
       method: "DELETE",
     });
     onUpdate();
@@ -186,11 +187,11 @@ export default function UsersTab({ users, loading, onUpdate }: UsersProps) {
       </div>
 
       {/* MODAL DE EDIÇÃO (OVERLAY) */}
-      {isModalOpen && (
+      {isModalOpen && editingUser && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-6">
           <div className="bg-slate-900 border border-slate-700 w-full max-w-lg rounded-[2.5rem] p-10 shadow-2xl animate-in zoom-in-95 duration-300">
             <h3 className="text-3xl font-black text-white italic uppercase mb-8">
-              Atualizar Membro
+              Ajustar Membro
             </h3>
 
             <div className="space-y-6">

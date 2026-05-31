@@ -16,8 +16,11 @@ export default function ReportsTab({ users, sinais }: ReportsTabProps) {
       date: filter.data,
     }).toString();
 
-    // CORREÇÃO: Prefixado com /admin/
-    const url = `http://localhost:8000/admin/export/report?${params}`;
+    // 1. Definição inteligente da URL base do Back-end
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+    // 2. Junção dinâmica usando as crases (Template Literal)
+    const url = `${baseUrl}/admin/export/report?${params}`;
     window.open(url, "_blank");
   };
 

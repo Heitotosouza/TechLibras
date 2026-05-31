@@ -11,9 +11,17 @@ export default function TrainingChart() {
   const [selectedEpoch, setSelectedEpoch] = useState<number | null>(null);
 
   useEffect(() => {
-    fetch("http://localhost:8000/admin/training-history")
+    // 1. Define a URL base inteligente (Render se no ar / localhost se no PC)
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+    // 2. Ajusta a chamada utilizando Template Literals (crases)
+    fetch(`${baseUrl}/admin/training-history`)
       .then((res) => res.json())
-      .then((data) => setHistory(data));
+      .then((data) => setHistory(data))
+      .catch((err) =>
+        console.error("Erro ao carregar telemetria de treino:", err),
+      );
+      );
   }, []);
 
   if (!history)

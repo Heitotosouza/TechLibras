@@ -29,7 +29,12 @@ export const NeuralMonitor: React.FC<Props> = ({ data, mode }) => {
 
   useEffect(() => {
     if (mode === "TREINO") {
-      fetch("http://localhost:8000/admin/training-history")
+      // 1. Define a URL base inteligente (Render no ar / localhost no PC)
+      const baseUrl =
+        process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+      // 2. Faz a requisição usando crases para injetar a variável base
+      fetch(`${baseUrl}/admin/training-history`)
         .then((res) => res.json())
         .then((d) => setHistory(d))
         .catch(() => console.log("Histórico ainda não disponível"));
