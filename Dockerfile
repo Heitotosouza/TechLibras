@@ -1,13 +1,12 @@
-# Usa a imagem estável do Python
-FROM python:3.11
+# Trocando para a versão slim, mais estável para atualizações de pacotes básicos
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# INSTALAÇÃO DE DEPENDÊNCIAS DO SISTEMA (CRÍTICO PARA MEDIAPIPE E OPENCV)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+# Adicionado tratamento para falhas de timeout de rede na hora de atualizar
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends libgl1-mesa-glx libglib2.0-0 && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copia as definições de pacotes primeiro (otimiza o cache do Docker)
 COPY Back-End/requirements.txt .
