@@ -1,26 +1,15 @@
-# Usa uma imagem estável do Python
-FROM python:3.11-slim
-
-# INSTALA DEPENDÊNCIAS DE SISTEMA (Adicionado comandos para forçar atualização limpa)
-RUN apt-get clean && \
-    apt-get update --fix-missing && \
-    apt-get install -y --no-install-recommends \
-    ffmpeg \
-    pkg-config \
-    build-essential \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+# Troca a imagem 'slim' pela imagem cheia estável (Resolve os problemas de apt-get)
+FROM python:3.11
 
 WORKDIR /app
 
 # Copia as definições de pacotes primeiro (otimiza o cache do Docker)
 COPY Back-End/requirements.txt .
 
-# Atualiza o ecossistema de instalação do Python antes do build pesado
+# Atualiza o ecossistema de instalação do Python antes do build
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Instala as bibliotecas do Python calculando as dependências limpas
+# Instala as bibliotecas do Python
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copia o restante do código do Back-End
