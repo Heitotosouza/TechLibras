@@ -1,17 +1,13 @@
 # Usa uma imagem estável do Python
 FROM python:3.11-slim
 
-# INSTALA DEPENDÊNCIAS DE SISTEMA (Essencial para áudio, vídeo e Whisper)
+# INSTALA DEPENDÊNCIAS DE SISTEMA (Essencial para OpenCV, MediaPipe e frames de vídeo)
 RUN apt-get update && apt-get install -y \
     ffmpeg \
-    libavdevice-dev \
-    libavfilter-dev \
-    libavformat-dev \
-    libavcodec-dev \
-    libswresample-dev \
-    libswscale-dev \
     pkg-config \
     build-essential \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
