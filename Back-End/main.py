@@ -14,8 +14,9 @@ from dotenv import load_dotenv
 # Carrega as configurações do arquivo .env (seja local ou no Render)
 load_dotenv()
 
-# Cria a lista de origens permitidas (Se não achar no .env, usa localhost por padrão)
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+# --- AJUSTE NO CORS (Limpando espaços ocultos) ---
+raw_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000")
+CORS_ORIGINS = [origin.strip() for origin in raw_origins.split(",")]
 
 from core.core_ia import ai_engine
 from core.admin_tools import router as admin_router
@@ -118,10 +119,33 @@ def prever_sinal(dados: DadosPrevisao):
         input_sequence = []
         frames = dados.sequencia[-20:]
 
+        # 1. Inicializa a variável com escopo seguro no topo da função
+        dist_dedao_medio = None
+
         for frame in frames:
             coords = []
             if len(frame) >= 21:
                 bx, by, bz = float(frame[0].x), float(frame[0].y), float(frame[0].z)
+
+                # --- DESEMPATE MATEMÁTICO: L vs D ---
+                dedao_x, dedao_y, dedao_z = (
+                    float(frame[4].x),
+                    float(frame[4].y),
+                    float(frame[4].z),
+                )
+                medio_x, medio_y, medio_z = (
+                    float(frame[12].x),
+                    float(frame[12].y),
+                    float(frame[12].z),
+                )
+
+                # Atualiza a distância com o frame válido mais recente
+                dist_dedao_medio = np.sqrt(
+                    (dedao_x - medio_x) ** 2
+                    + (dedao_y - medio_y) ** 2
+                    + (dedao_z - medio_z) ** 2
+                )
+
                 ref_dist = (
                     np.sqrt(
                         (float(frame[9].x) - bx) ** 2
@@ -130,6 +154,7 @@ def prever_sinal(dados: DadosPrevisao):
                     )
                     + 1e-6
                 )
+
                 for lm in frame:
                     coords.extend(
                         [
@@ -154,23 +179,36 @@ def prever_sinal(dados: DadosPrevisao):
 
         idx = int(np.argmax(probs_finais[0]))
         confianca = float(probs_finais[0][idx])
-        sinal_final = (
-            str(ai_engine.labels[idx]) if confianca > 0.85 else "Analisando..."
-        )
+        sinal_previso = str(ai_engine.labels[idx])
+
+        # 2. Heurística ajustada para checar se o valor real foi extraído com sucesso
+        if sinal_previso in ["L", "D"] and dist_dedao_medio is not None:
+            if dist_dedao_medio < 0.08:
+                sinal_final = "D"
+            else:
+                sinal_final = "L"
+        else:
+            sinal_final = sinal_previso if confianca > 0.85 else "Analisando..."
 
         return {
             "sinal": sinal_final,
             "confianca": confianca,
             "debug": {
-                "probabilidades": {
-                    str(ai_engine.labels[i]): float(probs_finais[0][i])
-                    for i in range(len(ai_engine.labels))
-                },
-                "ativacoes": (
-                    ativacoes_raw[0][-1].flatten().tolist()[:64]
-                    if len(ativacoes_raw.shape) > 2
-                    else ativacoes_raw[0].tolist()[:64]
+                "dist_dedao_medio_raw": (
+                    float(dist_dedao_medio) if dist_dedao_medio is not None else 0
                 ),
+                "probabilidades": {
+                    "L": (
+                        float(probs_finais[0][ai_engine.labels.index("L")])
+                        if "L" in ai_engine.labels
+                        else 0
+                    ),
+                    "D": (
+                        float(probs_finais[0][ai_engine.labels.index("D")])
+                        if "D" in ai_engine.labels
+                        else 0
+                    ),
+                },
                 "tempo_ms": round((time.time() - start_time) * 1000, 2),
             },
         }
