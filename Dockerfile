@@ -1,7 +1,13 @@
-# Troca a imagem 'slim' pela imagem cheia estável (Resolve os problemas de apt-get)
+# Usa a imagem estável do Python
 FROM python:3.11
 
 WORKDIR /app
+
+# INSTALAÇÃO DE DEPENDÊNCIAS DO SISTEMA (CRÍTICO PARA MEDIAPIPE E OPENCV)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copia as definições de pacotes primeiro (otimiza o cache do Docker)
 COPY Back-End/requirements.txt .
