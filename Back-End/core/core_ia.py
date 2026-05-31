@@ -20,39 +20,48 @@ class AIController:
         self.load_engine()
 
     def load_engine(self):
-        logger.info("Tentando carregamento final do motor...")
-        if os.path.exists(MODELO_PATH) and os.path.exists(CLASSES_PATH):
+        print("====== INICIALIZANDO ENGINE DE IA ======")
+        print(f"Caminho esperado do Modelo: {MODELO_PATH}")
+        print(f"Caminho esperado das Classes: {CLASSES_PATH}")
+        print(f"Modelo existe localmente? {os.path.exists(MODELO_PATH)}")
+        print(f"Classes existem localmente? {os.path.exists(CLASSES_PATH)}")
+
+        if not os.path.exists(MODELO_PATH) or not os.path.exists(CLASSES_PATH):
+            print("❌ ERRO CRÍTICO: Arquivos de IA ausentes no servidor!")
+            self.is_ready = False
+            print("========================================")
+            return
+
+        try:
+            # 1. Carrega o modelo
+            self.model = tf.keras.models.load_model(MODELO_PATH, compile=False)
+            self.labels = joblib.load(CLASSES_PATH)
+            print("-> Arquivos lidos com sucesso. Inicializando tensores...")
+
+            # 2. Dummy Input
+            dummy_input = np.zeros((1, 20, 63), dtype=np.float32)
+            _ = self.model(dummy_input, training=False)
+
+            # 3. Criar o modelo de diagnóstico
+            self.diagnostic_model = tf.keras.Model(
+                inputs=self.model.inputs,
+                outputs=[self.model.layers[-1].output, self.model.layers[0].output],
+            )
+
+            self.is_ready = True
+            print("✅ MOTOR DE IA DESBLOQUEADO E PRONTO!")
+
+        except Exception as e:
+            print(f"❌ Erro detectado no bloco principal da IA: {str(e)}")
             try:
-                # 1. Carrega o modelo
-                self.model = tf.keras.models.load_model(MODELO_PATH, compile=False)
-                self.labels = joblib.load(CLASSES_PATH)
-
-                # 2. Em vez de .build(), vamos apenas passar o dado.
-                # Se ele já está configurado, isso aqui vai inicializar os nós internos.
-                dummy_input = np.zeros((1, 20, 63), dtype=np.float32)
-                _ = self.model(dummy_input, training=False)
-
-                # 3. Criar o modelo de diagnóstico usando as camadas diretamente
-                # Isso evita o erro de "input not defined" porque pegamos os tensores da instância viva
-                self.diagnostic_model = tf.keras.Model(
-                    inputs=self.model.inputs,
-                    outputs=[self.model.layers[-1].output, self.model.layers[0].output],
-                )
-
+                print("-> Tentando carregar Plano C (Modo Básico)...")
+                self.diagnostic_model = self.model
                 self.is_ready = True
-                logger.info("✅ MOTOR DE IA DESBLOQUEADO!")
-
-            except Exception as e:
-                logger.error(f"❌ Erro no motor: {e}")
-                # Plano C: Se o diagnostic_model falhar, vamos tentar rodar a IA básica pelo menos
-                try:
-                    self.diagnostic_model = self.model
-                    self.is_ready = True
-                    logger.warning(
-                        "⚠️ IA operando em modo básico (sem debug de neurônios)."
-                    )
-                except:
-                    self.is_ready = False
+                print("⚠️ IA operando em modo básico.")
+            except Exception as e_inner:
+                print(f"❌ Falha total no Plano C: {str(e_inner)}")
+                self.is_ready = False
+        print("========================================")
 
 
 ai_engine = AIController()
