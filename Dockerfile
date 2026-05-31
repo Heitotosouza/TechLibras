@@ -1,8 +1,10 @@
 # Usa uma imagem estável do Python
 FROM python:3.11-slim
 
-# INSTALA DEPENDÊNCIAS DE SISTEMA (Essencial para OpenCV, MediaPipe e frames de vídeo)
-RUN apt-get update && apt-get install -y \
+# INSTALA DEPENDÊNCIAS DE SISTEMA (Adicionado comandos para forçar atualização limpa)
+RUN apt-get clean && \
+    apt-get update --fix-missing && \
+    apt-get install -y --no-install-recommends \
     ffmpeg \
     pkg-config \
     build-essential \
