@@ -27,7 +27,7 @@ export default function CameraIA({
   // BUFFER DE MEMÓRIA
   const frameBuffer = useRef<any[]>([]);
 
-  // REFS DE PERSISTÊNCIA (O SEGREDO DA ESTABILIDADE)
+  // REFS DE PERSISTÊNCIA (O SEGREDO DA ESTABILIDADE E DO VISUAL)
   const lastValidLandmarks = useRef<any>(null);
   const framesMissingCounter = useRef(0);
   const MAX_GHOST_FRAMES = 12; // Aguenta até ~0.4s de sumiço sem quebrar a sequência
@@ -72,8 +72,9 @@ export default function CameraIA({
     aiStarted.current = true;
 
     const hands = new win.Hands({
+      // Puxa os binários estáticos diretamente da sua pasta local mapeada em /public
       locateFile: (file: string) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675119248/${file}`;
+        return `/mediapipe/${file}`;
       },
     });
 
@@ -103,6 +104,7 @@ export default function CameraIA({
       const detectedLandmarks = results.multiHandLandmarks?.[0];
 
       if (detectedLandmarks) {
+        // --- CASO 1: MÃO PRESENTE NA TELA ---
         lastValidLandmarks.current = detectedLandmarks;
         framesMissingCounter.current = 0;
 
@@ -121,6 +123,7 @@ export default function CameraIA({
         lastValidLandmarks.current &&
         framesMissingCounter.current < MAX_GHOST_FRAMES
       ) {
+        // --- CASO 2: SUMIÇO TEMPORÁRIO (GHOSTING) ---
         framesMissingCounter.current++;
 
         canvasCtx.globalAlpha = 0.2;
@@ -138,8 +141,25 @@ export default function CameraIA({
         frameBuffer.current.push(lastValidLandmarks.current);
         onLandmarksUpdate?.(lastValidLandmarks.current);
       } else {
+        // --- CASO 3: MÃO REMOVIDA DEFINITIVAMENTE ---
         if (frameBuffer.current.length > 0) {
           setPrevisao(null);
+          frameBuffer.current = []; // Reseta o buffer logístico imediatamente
+        }
+
+        // Mantém a mão estática translúcida na tela indicando que a pose foi capturada
+        if (lastValidLandmarks.current) {
+          canvasCtx.globalAlpha = 0.15;
+          win.drawConnectors(
+            canvasCtx,
+            lastValidLandmarks.current,
+            win.HAND_CONNECTIONS,
+            {
+              color: "#ffffff",
+              lineWidth: 2,
+            },
+          );
+          canvasCtx.globalAlpha = 1.0;
         }
       }
 
@@ -186,7 +206,6 @@ export default function CameraIA({
     }
   }, [loadScripts]);
 
-  // Gerenciamento isolado do intervalo de predição para evitar loops infinitos
   useEffect(() => {
     const predictInterval = setInterval(() => {
       if (loaded && frameBuffer.current.length === 20) {
