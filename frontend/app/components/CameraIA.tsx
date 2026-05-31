@@ -85,10 +85,10 @@ export default function CameraIA({
     if (!win.Hands || !win.Camera || loaded || !webcamRef.current?.video)
       return;
 
-    // CORREÇÃO CRÍTICA: Sincronizando também o carregamento dos binários WASM e DATA internos na mesma versão
     const hands = new win.Hands({
-      locateFile: (file: string) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424638/${file}`,
+      locateFile: (file: string) => {
+        return `https://unpkg.com/@mediapipe/hands/${file}`;
+      },
     });
 
     hands.setOptions({
