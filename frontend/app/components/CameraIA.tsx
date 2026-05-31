@@ -33,10 +33,12 @@ export default function CameraIA({
   const MAX_GHOST_FRAMES = 12; // Aguenta até ~0.4s de sumiço sem quebrar a sequência
 
   const loadScripts = useCallback(async () => {
+    // CORREÇÃO CRÍTICA: Travando a versão do ecossistema MediaPipe Hands para evitar quebras de CDN
+    const VERSION = "0.4.1646424638";
     const scripts = [
-      "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js",
-      "https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js",
-      "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js",
+      `https://cdn.jsdelivr.net/npm/@mediapipe/hands@${VERSION}/hands.js`,
+      `https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@${VERSION}/drawing_utils.js`,
+      `https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@${VERSION}/camera_utils.js`,
     ];
 
     for (const src of scripts) {
@@ -73,6 +75,8 @@ export default function CameraIA({
       }
     } catch (e) {
       console.error("Erro na detecção:", e);
+      // Evita acúmulo de processamento antigo caso a rede falhe
+      frameBuffer.current.shift();
     }
   };
 
@@ -81,9 +85,10 @@ export default function CameraIA({
     if (!win.Hands || !win.Camera || loaded || !webcamRef.current?.video)
       return;
 
+    // CORREÇÃO CRÍTICA: Sincronizando também o carregamento dos binários WASM e DATA internos na mesma versão
     const hands = new win.Hands({
       locateFile: (file: string) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+        `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424638/${file}`,
     });
 
     hands.setOptions({
@@ -126,6 +131,8 @@ export default function CameraIA({
         });
 
         frameBuffer.current.push(detectedLandmarks);
+        // Notifica o componente pai sobre a atualização dos landmarks em tempo real
+        onLandmarksUpdate?.(detectedLandmarks);
       } else if (
         lastValidLandmarks.current &&
         framesMissingCounter.current < MAX_GHOST_FRAMES
@@ -145,11 +152,10 @@ export default function CameraIA({
 
         // ENVIAMOS A ÚLTIMA POSIÇÃO PARA O BUFFER (Isso mantém a LSTM viva!)
         frameBuffer.current.push(lastValidLandmarks.current);
+        onLandmarksUpdate?.(lastValidLandmarks.current);
       } else {
         // --- CASO 3: SUMIU DE VEZ (RESET) ---
         if (frameBuffer.current.length > 0) {
-          // frameBuffer.current = [];
-          // lastValidLandmarks.current = null;
           setPrevisao(null);
         }
       }

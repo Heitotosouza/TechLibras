@@ -316,14 +316,16 @@ export default function Home() {
           {role === "ADMIN" && <AdminPanel />}
         </div>
 
-        {/* SIDEBAR GLOBAL (Apenas para TREINADOR) */}
+        {/* COMPONENTE CORRIGIDO: Agora com tamanho fixo e isolado em uma coluna lateral real */}
         {role === "TREINADOR" && (
-          <Sidebar
-            contagem={contagem}
-            meta={META}
-            loading={estaGravando}
-            onRefresh={atualizarContagem}
-          />
+          <aside className="w-80 h-full bg-slate-900/30 border-l border-slate-800/80 p-8 shrink-0 animate-in slide-in-from-right duration-300">
+            <Sidebar
+              contagem={contagem}
+              meta={META}
+              loading={estaGravando}
+              onRefresh={atualizarContagem}
+            />
+          </aside>
         )}
       </div>
 
