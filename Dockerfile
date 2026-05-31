@@ -1,14 +1,18 @@
-# Trocando para a versão slim, mais estável para atualizações de pacotes básicos
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Adicionado tratamento para falhas de timeout de rede na hora de atualizar
-RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends libgl1-mesa-glx libglib2.0-0 && \
-    rm -rf /var/lib/apt/lists/*
+# Força o apt a rodar sem janelas interativas e instala as dependências de vídeo
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Copia as definições de pacotes primeiro (otimiza o cache do Docker)
+RUN apt-get clean && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copia as definições de pacotes
 COPY Back-End/requirements.txt .
 
 # Atualiza o ecossistema de instalação do Python antes do build
@@ -17,11 +21,9 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 # Instala as bibliotecas do Python
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copia o restante do código do Back-End
+# Copia todo o conteúdo de dentro de Back-End direto para a raiz /app do container
 COPY Back-End/ .
 
-# Porta padrão que o Render mapeia internamente
 EXPOSE 10000
 
-# O Uvicorn agora escuta na porta 10000 nativa do Render
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000"]
