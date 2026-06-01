@@ -119,7 +119,6 @@ def prever_sinal(dados: DadosPrevisao):
         input_sequence = []
         frames = dados.sequencia[-20:]
 
-        # 1. Inicializa a variável com escopo seguro no topo da função
         dist_dedao_medio = None
 
         for frame in frames:
@@ -127,7 +126,6 @@ def prever_sinal(dados: DadosPrevisao):
             if len(frame) >= 21:
                 bx, by, bz = float(frame[0].x), float(frame[0].y), float(frame[0].z)
 
-                # --- DESEMPATE MATEMÁTICO: L vs D ---
                 dedao_x, dedao_y, dedao_z = (
                     float(frame[4].x),
                     float(frame[4].y),
@@ -139,7 +137,6 @@ def prever_sinal(dados: DadosPrevisao):
                     float(frame[12].z),
                 )
 
-                # Atualiza a distância com o frame válido mais recente
                 dist_dedao_medio = np.sqrt(
                     (dedao_x - medio_x) ** 2
                     + (dedao_y - medio_y) ** 2
@@ -171,17 +168,38 @@ def prever_sinal(dados: DadosPrevisao):
                 input_sequence[-1] if len(input_sequence) > 0 else [0.0] * 63
             )
 
+        # --- EXECUÇÃO DO MODELO COM FORMATAÇÃO SEGURA ---
         X = np.array([input_sequence], dtype=np.float32)
-        res = ai_engine.diagnostic_model.predict(X, verbose=0)
 
-        probs_finais = res[0] if isinstance(res, list) else res
-        ativacoes_raw = res[1] if isinstance(res, list) else np.zeros((1, 20, 64))
+        try:
+            res = ai_engine.diagnostic_model.predict(X, verbose=0)
+        except Exception as err_pred:
+            print(f"❌ ERRO NO PREDICT DO TENSORFLOW: {str(err_pred)}")
+            raise HTTPException(
+                status_code=500, detail="Erro interno na execução da rede neural."
+            )
 
-        idx = int(np.argmax(probs_finais[0]))
-        confianca = float(probs_finais[0][idx])
-        sinal_previso = str(ai_engine.labels[idx])
+        # Tratamento do formato de saída (Garante compatibilidade com Plano C ou Modelo Completo)
+        if isinstance(res, list):
+            probs_finais = res[0]
+        else:
+            probs_finais = res
 
-        # 2. Heurística ajustada para checar se o valor real foi extraído com sucesso
+        # Normaliza o shape das probabilidades para extrair o índice com segurança
+        if len(probs_finais.shape) > 1:
+            valores_preditos = probs_finais[0]
+        else:
+            valores_preditos = probs_finais
+
+        idx = int(np.argmax(valores_preditos))
+        confianca = float(valores_preditos[idx])
+
+        try:
+            sinal_previso = str(ai_engine.labels[idx])
+        except Exception:
+            sinal_previso = "Desconhecido"
+
+        # --- HEURÍSTICA DE DESEMPATE ---
         if sinal_previso in ["L", "D"] and dist_dedao_medio is not None:
             if dist_dedao_medio < 0.08:
                 sinal_final = "D"
@@ -190,6 +208,18 @@ def prever_sinal(dados: DadosPrevisao):
         else:
             sinal_final = sinal_previso if confianca > 0.85 else "Analisando..."
 
+        # Montagem do dicionário de probabilidades sem risco de quebra de índice
+        probabilidades_debug = {}
+        for label in ["L", "D"]:
+            try:
+                if label in ai_engine.labels:
+                    l_idx = ai_engine.labels.index(label)
+                    probabilidades_debug[label] = float(valores_preditos[l_idx])
+                else:
+                    probabilidades_debug[label] = 0.0
+            except:
+                probabilidades_debug[label] = 0.0
+
         return {
             "sinal": sinal_final,
             "confianca": confianca,
@@ -197,22 +227,12 @@ def prever_sinal(dados: DadosPrevisao):
                 "dist_dedao_medio_raw": (
                     float(dist_dedao_medio) if dist_dedao_medio is not None else 0
                 ),
-                "probabilidades": {
-                    "L": (
-                        float(probs_finais[0][ai_engine.labels.index("L")])
-                        if "L" in ai_engine.labels
-                        else 0
-                    ),
-                    "D": (
-                        float(probs_finais[0][ai_engine.labels.index("D")])
-                        if "D" in ai_engine.labels
-                        else 0
-                    ),
-                },
+                "probabilidades": probabilidades_debug,
                 "tempo_ms": round((time.time() - start_time) * 1000, 2),
             },
         }
     except Exception as e:
+        print(f"❌ ERRO GERAL NA ROTA PREVER: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
