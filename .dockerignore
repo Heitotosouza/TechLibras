@@ -1,0 +1,14 @@
+# Ignora a pasta do Front-End usando o nome idêntico da sua árvore
+frontend/
+node_modules/
+.next/
+
+# Ignora os lixos locais do ambiente virtual do Python
+Back-End/venv/
+Back-End/__pycache__/
+**/__pycache__/
+**/*.pyc
+
+# Ignora controle de versão local
+.git/
+.gitignore

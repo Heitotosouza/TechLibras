@@ -12,7 +12,7 @@ RUN apt-get clean && \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copia as definições de pacotes
+# 1. Copia o arquivo de requerimentos usando o nome exato da sua pasta: Back-End
 COPY Back-End/requirements.txt .
 
 # Atualiza o ecossistema de instalação do Python antes do build
@@ -21,8 +21,11 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 # Instala as bibliotecas do Python
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copia todo o conteúdo de dentro de Back-End direto para a raiz /app do container
+# 2. Copia todo o conteúdo de dentro de Back-End direto para a raiz /app do container
 COPY Back-End/ .
+
+# 3. Copia o arquivo .env da raiz do seu projeto para dentro do container
+COPY .env .
 
 EXPOSE 10000
 
