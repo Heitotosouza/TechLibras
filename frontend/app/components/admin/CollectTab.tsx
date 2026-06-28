@@ -33,50 +33,70 @@ export default function CollectTab({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const handLandmarksRef = useRef<any>(null);
 
-  // --- LÓGICA DE GRAVAÇÃO (ATUALIZADA COM URL DINÂMICA) ---
   const iniciarGravacaoMestre = useCallback(async () => {
     if (!nomeSinal) return;
-    if (isRecording || !handLandmarksRef.current) return;
+    if (isRecording) return;
 
     setIsRecording(true);
     setProgress(0);
 
-    const totalAmostras = 10;
-    let capturasFeitas = 0;
+    const totalFramesEsperados = 20;
+    const framesColetados: any[] = [];
+    let ultimaMaoValida: any = null;
+
+    // Dá 1 segundo de preparação para o usuário estabilizar a mão antes de gravar
+    await new Promise((resolve) => setTimeout(resolve, 1000));
 
     const intervalo = setInterval(async () => {
       if (handLandmarksRef.current) {
-        try {
-          const baseUrl =
-            process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-          const res = await fetch(`${baseUrl}/salvar-sinal`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              nome: nomeSinal.toUpperCase(),
-              autor: currentUser || "Admin",
-              tipo: tipoCaptura,
-              landmarks: handLandmarksRef.current,
-              data_coleta: new Date().toISOString(),
-            }),
-          });
-
-          if (res.ok) {
-            capturasFeitas++;
-            setProgress(Math.round((capturasFeitas / totalAmostras) * 100));
-          }
-        } catch (err) {
-          console.error("Erro na captura:", err);
-        }
+        // Guarda o frame e atualiza a última posição conhecida
+        framesColetados.push(handLandmarksRef.current);
+        ultimaMaoValida = handLandmarksRef.current;
+      } else if (ultimaMaoValida) {
+        // 🛡️ FILTRO ANTI-SUMIÇO: Se a mão sumiu rápido, repete o último frame conhecido
+        framesColetados.push(ultimaMaoValida);
       }
 
-      if (capturasFeitas >= totalAmostras) {
+      if (framesColetados.length > 0) {
+        setProgress(
+          Math.round((framesColetados.length / totalFramesEsperados) * 100),
+        );
+      }
+
+      if (framesColetados.length >= totalFramesEsperados) {
         clearInterval(intervalo);
+
+        // Só envia se realmente conseguimos coletar dados úteis
+        if (
+          framesColetados.length === totalFramesEsperados &&
+          ultimaMaoValida !== null
+        ) {
+          try {
+            const baseUrl =
+              process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+            await fetch(`${baseUrl}/salvar-sinal`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                nome: nomeSinal.toUpperCase(),
+                autor: currentUser || "Admin",
+                tipo: tipoCaptura,
+                landmarks:
+                  tipoCaptura === "DINAMICO"
+                    ? framesColetados
+                    : handLandmarksRef.current,
+                data_coleta: new Date().toISOString(),
+              }),
+            });
+          } catch (err) {
+            console.error("Erro no envio:", err);
+          }
+        }
+
         setIsRecording(false);
         carregarSinaisDetalhado();
       }
-    }, 200);
+    }, 60); // ~60ms por frame dá uma janela confortável de 1.2 segundos de movimento
   }, [nomeSinal, isRecording, currentUser, tipoCaptura]);
 
   // --- ATALHO DE TECLADO (TECLA G) ---

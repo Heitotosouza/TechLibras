@@ -2,13 +2,23 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
-from bson import ObjectId  # Importado aqui para ser global
+from bson import ObjectId
 from .database import db_users, db_sinais
 
 router = APIRouter(tags=["Administração e BI"])
 
+# --- MODELOS DE ENTRADA (PYDANTIC) ---
+
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    role: Optional[str] = "user"
+
 
 # --- AUXILIARES ---
+
+
 async def get_user_stats(username):
     if not username:
         return {"total": 0, "xp": 0}
@@ -17,9 +27,10 @@ async def get_user_stats(username):
     return {"total": total, "xp": user.get("empenho", 0) if user else 0}
 
 
-# --- ROTAS DE LISTAGEM ---
+# --- ROTAS DE LISTAGEM (SUPORTA AMBOS OS CAMINHOS DO FRONT) ---
 
 
+@router.get("/usuarios")
 @router.get("/usuarios/lista")
 async def listar_todos_usuarios():
     cursor = db_users.usuarios.find({}, {"password": 0})
@@ -35,6 +46,7 @@ async def listar_todos_usuarios():
     ]
 
 
+@router.get("/lista-sinais")
 @router.get("/lista-sinais-detalhada")
 async def lista_sinais_detalhada():
     """Retorna todos os sinais com detalhes para o Gerenciador de Dataset"""
@@ -43,6 +55,30 @@ async def lista_sinais_detalhada():
     for s in sinais:
         s["_id"] = str(s["_id"])
     return sinais
+
+
+# --- ROTAS DE CRIAÇÃO (POST) ---
+
+
+@router.post("/usuarios")
+async def cadastrar_novo_usuario(user_data: UserCreate):
+    """Cadastra um novo usuário no sistema"""
+    existente = await db_users.usuarios.find_one({"username": user_data.username})
+    if existente:
+        raise HTTPException(
+            status_code=400, detail="Usuário já cadastrado com esse nome."
+        )
+
+    novo_user = {
+        "username": user_data.username,
+        "password": user_data.password,  # Nota: Ideal aplicar hash aqui no futuro
+        "role": user_data.role,
+        "empenho": 0,
+        "data_cadastro": datetime.utcnow(),
+    }
+
+    resultado = await db_users.usuarios.insert_one(novo_user)
+    return {"status": "success", "id": str(resultado.inserted_id)}
 
 
 # --- ROTAS DE ESTATÍSTICAS (BI) ---
@@ -67,7 +103,7 @@ async def comparar_usuarios(u1: str, u2: str = ""):
     }
 
 
-# --- ROTAS DE EXCLUSÃO (SEGURANÇA) ---
+# --- ROTAS DE EXCLUSÃO ---
 
 
 @router.delete("/sinal/{id}")
@@ -79,12 +115,10 @@ async def deletar_sinal(id: str):
         raise HTTPException(status_code=400, detail="ID Inválido")
 
 
-# --- NOVO: BOTÃO DE DESTRUIÇÃO TOTAL POR SINAL ---
 @router.delete("/limpar-sinal/{nome_sinal}")
 async def limpar_sinal_inteiro(nome_sinal: str):
     """Apaga todas as amostras de um sinal específico (Ex: Apagar tudo do 'L')"""
     try:
-        # Usamos o upper() para garantir que pegue o sinal independente de como foi digitado
         resultado = await db_sinais.sinais.delete_many({"nome": nome_sinal.upper()})
         return {
             "status": "success",

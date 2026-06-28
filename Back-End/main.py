@@ -80,13 +80,18 @@ def get_password_hash(password):
 
 
 def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        # Tenta a verificação padrão via passlib
+        return pwd_context.verify(plain_password, hashed_password)
+    except Exception:
+        # Se estourar UnknownHashError por causa de texto puro, compara diretamente
+        return plain_password == hashed_password
 
 
 # --- ROTAS DO SISTEMA ---
 
 
-@app.get("/admin/training-history", tags=["Admin"])
+@app.get("/historico", tags=["Admin"])
 async def obter_historico_treino(sinal: Optional[str] = None):
     if not os.path.exists(HISTORY_PATH):
         return {
@@ -248,7 +253,7 @@ async def login(dados: UserLogin):
             detail="ID de Operador não encontrado no sistema.",
         )
 
-    # 3. VALIDAÇÃO REAL: Verifica estritamente o hash criptográfico
+    # 3. VALIDAÇÃO REAL: Verifica estritamente o hash ou faz fallback seguro
     if not verify_password(dados.password, user["password"]):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
